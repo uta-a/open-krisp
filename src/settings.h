@@ -6,6 +6,7 @@
 #pragma once
 #include "engine.h"
 #include "hotkey.h"
+#include "tui_screen.h"
 #include <string>
 
 struct Settings {
@@ -21,6 +22,9 @@ struct Settings {
     KeyBinding muteKey{ 0, 'M' };
     // どのアプリを使っていても効くキー。既定は未割り当て（何も奪わない）。
     KeyBinding globalMuteKey;
+
+    // conhost で開き直した窓の見た目（フォントと透過）
+    TermStyle style;
 };
 
 // exe と同じフォルダの openkrisp.ini のフルパス。

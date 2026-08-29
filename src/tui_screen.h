@@ -101,13 +101,26 @@ struct TermEvent {
     // 取得できない。設定ファイルに手で書けば解釈はされる。
 };
 
+// conhost のウィンドウに適用する見た目。既定値は利用者の Windows Terminal の
+// 設定（JetBrainsMono NFM / opacity 95）に合わせてある。
+struct TermStyle {
+    std::wstring fontFace = L"JetBrainsMono NFM";
+    int fontSize = 16;      // 文字セルの高さ(px)。12pt 相当
+    int opacity  = 95;      // 0-100。100 で不透明
+};
+
 class Term {
 public:
     // モードを退避し、VT を有効化して代替画面へ移る。
     // 代替画面へ入る前に fixedCols x fixedRows へ端末を合わせ、リサイズも塞ぐ。
     // VT を有効にできない端末では false を返す（TUI を諦める）。
     // サイズを合わせられない端末でも TUI 自体は起動する（size() は実サイズを返す）。
-    bool enter(int fixedCols, int fixedRows, std::wstring* err);
+    //
+    // ownWindow: この窓を自分で開いたか。自分の窓ならスクロールバッファも
+    //   要求サイズちょうどに縮める（スクロールバーを出さないため）。
+    //   利用者が既に使っていた窓では縮めない。今まで出力していた履歴が消えるため。
+    bool enter(int fixedCols, int fixedRows, bool ownWindow,
+               const TermStyle& style, std::wstring* err);
     // 退避したモード・サイズ・ウィンドウスタイルへ完全に戻す。
     // 多重呼び出し安全（Ctrl+C ハンドラからも呼ぶ）。
     void leave();
@@ -121,6 +134,9 @@ public:
     // 進み具合で測る。East Asian Ambiguous はフォント任せで決め打ちできないため。
     // 代替画面へ入った後、最初の描画より前に呼ぶこと。
     bool probeAmbiguousDoubleWidth();
+    // 実際に適用できたフォント名。要求と違えば conhost に弾かれている。
+    // 何も適用できなかった場合は空。
+    const std::wstring& appliedFont() const { return appliedFont_; }
     // timeoutMs 待って入力を取り出す。false ならタイムアウト（＝再描画の合図）。
     bool poll(TermEvent* ev, DWORD timeoutMs);
     void wake();                        // poll を即座に起こす
@@ -130,6 +146,8 @@ public:
 private:
     // 要求サイズへ寄せる。合わせられたら true。
     bool applySize(int cols, int rows);
+    // フォントと透過を適用する。conhost 以外では効かない。
+    void applyStyle(const TermStyle& style);
 
     HANDLE hIn_ = nullptr, hOut_ = nullptr, hWake_ = nullptr;
     DWORD  savedIn_ = 0, savedOut_ = 0;
@@ -146,7 +164,12 @@ private:
     // size() は const だが、測るたびに判定を更新したいので mutable にしてある。
     mutable bool sizeLocked_ = false;
     unsigned long long lastApply_ = 0;        // enforceSize() の暴走よけ
+    bool   ownWindow_ = false;
     // leave() で元へ戻すために enter() で退避する
+    CONSOLE_FONT_INFOEX savedFont_ = {};
+    bool   fontSaved_ = false;
+    std::wstring appliedFont_;
+    bool   layered_ = false;      // 透過のために WS_EX_LAYERED を足したか
     int    savedWinCols_ = 0, savedWinRows_ = 0;
     COORD  savedBuf_ = { 0, 0 };
     HWND   hwnd_ = nullptr;

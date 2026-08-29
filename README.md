@@ -153,11 +153,24 @@ conhost（従来のコンソール窓）で開き直します。** タブの中�
   `openkrisp.ini` に `Win+F1` のように手で書けば有効になります。
 - 押しっぱなしで連射しないようにしてあります。
 
-#### 配色
+#### 見た目（配色・フォント・透過）
 
-配色は Windows PowerShell のコンソールに合わせてあります（背景 `#012456`、
-前景 `#EEEDF0`、アクセントは Campbell の明色）。端末の既定色に任せず自前で
-塗っているので、conhost で開き直しても見た目が変わりません。
+Windows Terminal の設定に合わせてあります。既定値は次のとおりです。
+
+| 項目 | 既定値 | 備考 |
+|---|---|---|
+| 配色 | スキーム `Claude Dark`（背景 `#0D0D0F` / 前景 `#FAF9F5`） | 端末の既定色に任せず 24bit で自前指定 |
+| フォント | `JetBrainsMono NFM` / セル高 16px | `[ui] font` `[ui] font_size` |
+| 透過 | 95% | `[ui] opacity`。30〜100 |
+
+フォントと透過は **conhost で開き直した窓にだけ効きます**（Windows Terminal 配下では
+端末側の設定が使われます）。透過は conhost 自身の機能（`Ctrl+Shift+ホイール`）と
+同じ仕組みで、文字ごと透ける方式です。Windows Terminal のアクリルとは見え方が
+違います。
+
+指定したフォントを conhost が使えない場合は `Consolas` へ落とし、画面下部に
+その旨を出します。conhost はフォントに制約があるので、うまくいかないときは
+`Consolas` か `Lucida Console`、日本語重視なら `ＭＳ ゴシック` を試してください。
 
 #### 罫線がずれる場合
 
@@ -244,6 +257,9 @@ global_mute=なし
 
 [ui]
 ascii=0
+font=JetBrainsMono NFM
+font_size=16
+opacity=95
 ```
 
 `[hotkey]` の書式は `M` / `Ctrl+Shift+M` / `Alt+F1` / `Win+Space` / `F13` / `なし`。

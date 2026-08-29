@@ -97,6 +97,11 @@ bool loadSettings(Settings* out) {
     num(L"audio.agc_target",     s.cfg.agcTarget);
     boolean(L"ui.ascii",         s.ascii);
     s.asciiSet = (kv.find(L"ui.ascii") != kv.end());
+    str(L"ui.font",              s.style.fontFace);
+    integer(L"ui.font_size",     s.style.fontSize);
+    integer(L"ui.opacity",       s.style.opacity);
+    if (s.style.fontSize < 8 || s.style.fontSize > 72) s.style.fontSize = 16;
+    if (s.style.opacity  < 30 || s.style.opacity  > 100) s.style.opacity = 95;
 
     // キー割り当ては解釈できたときだけ差し替える（壊れた行で既定を失わない）
     {
@@ -169,6 +174,12 @@ bool saveSettings(const Settings& s, std::wstring* err) {
     t += L"; ascii=1 で罫線とメーターを ASCII にする（枠がずれる端末向け）\n";
     t += L"; この行を消すと、起動時に端末を実測して自動で決める\n";
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"ascii=%d\n", s.ascii ? 1 : 0);
+    t += buf;
+    t += L"; font / font_size / opacity は conhost で開き直した窓にだけ効く\n";
+    t += L"; font_size は文字セルの高さ(px)、opacity は 30-100（100 で不透明）\n";
+    t += L"font=" + s.style.fontFace + L"\n";
+    _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"font_size=%d\nopacity=%d\n",
+                 s.style.fontSize, s.style.opacity);
     t += buf;
 
     // 一時ファイルへ書いてから置換する。途中で失敗しても既存の ini は壊れない。

@@ -175,18 +175,19 @@ void Screen::hsep(int x, int y, int w, uint16_t attr) {
     put(x + w - 1, y, gl.mr, attr);
 }
 
-// 配色は Windows PowerShell のコンソールに合わせる。
+// 配色は利用者の Windows Terminal のスキーム "Claude Dark" に合わせてある。
 // 端末の既定色に任せず自前で塗るのは、conhost で開き直したときに配色が
-// 利用者の設定次第でばらつくのと、背景を塗らないと枠の外が浮いて見えるため。
+// 利用者の conhost 側の設定次第でばらつくのと、背景を塗らないと枠の外が
+// 浮いて見えるため。
 namespace {
 struct Rgb { unsigned char r, g, b; };
-const Rgb kBg     = { 0x01, 0x24, 0x56 };   // PowerShell の既定の背景
-const Rgb kFg     = { 0xEE, 0xED, 0xF0 };
-const Rgb kDim    = { 0x8A, 0x9B, 0xB8 };   // 背景が濃紺なので灰色ではなく青寄りに
-const Rgb kCyan   = { 0x61, 0xD6, 0xD6 };
-const Rgb kGreen  = { 0x16, 0xC6, 0x0C };
-const Rgb kYellow = { 0xF9, 0xF1, 0xA5 };
-const Rgb kRed    = { 0xE7, 0x48, 0x56 };
+const Rgb kBg     = { 0x0D, 0x0D, 0x0F };   // background
+const Rgb kFg     = { 0xFA, 0xF9, 0xF5 };   // foreground
+const Rgb kDim    = { 0x6C, 0x6A, 0x64 };   // brightBlack
+const Rgb kCyan   = { 0xB8, 0xCB, 0xD2 };   // brightCyan
+const Rgb kGreen  = { 0x7F, 0xCB, 0x90 };   // brightGreen
+const Rgb kYellow = { 0xE8, 0xA5, 0x5A };   // brightYellow
+const Rgb kRed    = { 0xD9, 0x62, 0x62 };   // brightRed
 } // namespace
 
 // 属性を SGR シーケンスへ。属性が変わるところでだけ出す。
@@ -342,11 +343,75 @@ bool Term::applySize(int cols, int rows) {
         size(&c, &r);
         return false;
     }
-    // 横スクロールバーが出ないよう、バッファは要求サイズちょうどにする
-    const COORD buf = { (SHORT)cols, (SHORT)rows };
+    // 自分で開いた窓なら、スクロールバーが出ないようバッファを要求サイズ
+    // ちょうどにする。利用者が既に使っていた窓では縮めない（それまで出力して
+    // いた履歴が消えるため）。その場合はバッファが大きいままなので
+    // スクロールバーが残るが、履歴を失うよりはましと考える。
+    COORD buf = { (SHORT)cols, (SHORT)rows };
+    if (!ownWindow_) {
+        CONSOLE_SCREEN_BUFFER_INFO bi;
+        if (GetConsoleScreenBufferInfo(hOut_, &bi)) {
+            buf.X = (std::max)((SHORT)cols, bi.dwSize.X);
+            buf.Y = (std::max)((SHORT)rows, bi.dwSize.Y);
+        }
+    }
     setConsoleGeometry(hOut_, cols, rows, buf);
     size(&c, &r);
     return c == cols && r == rows;
+}
+
+namespace {
+// フォントを指定して、実際に反映されたかを読み戻して確かめる。
+// conhost は HKLM\...\Console\TrueTypeFont に登録されたフォントしか受け付けず、
+// それ以外を渡しても SetCurrentConsoleFontEx は成功を返したまま何も変えない。
+// 戻り値だけ見ていると「効いたつもり」になるので必ず読み戻す。
+bool trySetConsoleFont(HANDLE hOut, const std::wstring& face, int px) {
+    CONSOLE_FONT_INFOEX f = {};
+    f.cbSize = sizeof(f);
+    f.nFont = 0;
+    f.dwFontSize.X = 0;              // TrueType は高さだけ指定すれば幅は追従する
+    f.dwFontSize.Y = (SHORT)px;
+    f.FontFamily = 54;               // FF_MODERN | TMPF_VECTOR | TMPF_TRUETYPE
+    f.FontWeight = 400;
+    wcsncpy_s(f.FaceName, face.c_str(), _TRUNCATE);
+    if (!SetCurrentConsoleFontEx(hOut, FALSE, &f)) return false;
+
+    CONSOLE_FONT_INFOEX got = {};
+    got.cbSize = sizeof(got);
+    if (!GetCurrentConsoleFontEx(hOut, FALSE, &got)) return false;
+    return _wcsicmp(got.FaceName, face.c_str()) == 0;
+}
+} // namespace
+
+// フォントと透過を適用する。どちらも conhost のウィンドウにしか効かない。
+// Windows Terminal 配下では GetConsoleWindow() が擬似ウィンドウを返すので
+// 透過は無視され、フォントは端末側の設定が使われる。
+void Term::applyStyle(const TermStyle& style) {
+    if (!style.fontFace.empty() && style.fontSize > 0) {
+        CONSOLE_FONT_INFOEX cur = {};
+        cur.cbSize = sizeof(cur);
+        if (GetCurrentConsoleFontEx(hOut_, FALSE, &cur)) { savedFont_ = cur; fontSaved_ = true; }
+
+        appliedFont_ = style.fontFace;
+        if (!trySetConsoleFont(hOut_, style.fontFace, style.fontSize)) {
+            // 使えないフォントだった。既定のラスターフォントのままにすると
+            // 罫線も日本語も潰れるので、必ず登録されている Consolas へ落とす。
+            if (trySetConsoleFont(hOut_, L"Consolas", style.fontSize))
+                appliedFont_ = L"Consolas";
+            else
+                appliedFont_.clear();   // 何も適用できなかった
+        }
+    }
+
+    if (hwnd_ && style.opacity >= 0 && style.opacity < 100) {
+        LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
+        SetWindowLong(hwnd_, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        layered_ = true;
+        // conhost 自身の透過(Ctrl+Shift+ホイール)と同じ仕組み。
+        // 文字ごと透ける方式で、Windows Terminal のアクリルとは見え方が違う。
+        SetLayeredWindowAttributes(hwnd_, 0,
+                                   (BYTE)(style.opacity * 255 / 100), LWA_ALPHA);
+    }
 }
 
 void Term::enforceSize() {
@@ -362,7 +427,9 @@ void Term::enforceSize() {
     applySize(wantCols_, wantRows_);
 }
 
-bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
+bool Term::enter(int fixedCols, int fixedRows, bool ownWindow,
+                 const TermStyle& style, std::wstring* err) {
+    ownWindow_ = ownWindow;
     hOut_ = GetStdHandle(STD_OUTPUT_HANDLE);
     hIn_  = GetStdHandle(STD_INPUT_HANDLE);
     if (hOut_ == INVALID_HANDLE_VALUE || hIn_ == INVALID_HANDLE_VALUE) {
@@ -420,6 +487,20 @@ bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
         }
     }
 
+    // フォントはサイズ合わせより先に。文字セルの大きさが変わると窓の実寸も
+    // 変わるので、順序を逆にすると合わせた直後にずれる。
+    applyStyle(style);
+
+    // サイズ合わせは代替画面へ入る前に行う。conhost の代替バッファは
+    // SetConsoleScreenBufferSize を受け付けず、バッファだけ元の高さ(既定9001行)の
+    // まま残ってスクロールバーが出てしまうため。
+    wantCols_ = (fixedCols > 0) ? fixedCols : 0;
+    wantRows_ = (fixedRows > 0) ? fixedRows : 0;
+    if (wantCols_ > 0 && wantRows_ > 0) {
+        lastApply_ = GetTickCount64();
+        applySize(wantCols_, wantRows_);
+    }
+
     // conhost で開き直すとタイトルが "conhost.exe" のままになるので付け直す。
     // 元のタイトルは leave() で戻す。
     if (GetConsoleTitleW(savedTitle_, (DWORD)(sizeof(savedTitle_) / sizeof(savedTitle_[0]))))
@@ -437,18 +518,6 @@ bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
     WriteConsoleW(hOut_, init.c_str(), (DWORD)init.size(), &wrote, nullptr);
     entered_ = true;
     left_.store(false);
-
-    // サイズ合わせは「代替画面へ入った後」に行う。
-    // conhost ではバッファを 18 行へ縮める操作がメイン画面のスクロールバッファに
-    // 効いてしまい、利用者がそれまで端末に出していた履歴（既定 9001 行ぶん）が
-    // 消える。代替画面へ移ってからなら、縮むのは代替バッファだけで済む。
-    // 合わせられない端末でも TUI は起動し、呼び出し側は sizeLocked() を見て落とす。
-    wantCols_ = (fixedCols > 0) ? fixedCols : 0;
-    wantRows_ = (fixedRows > 0) ? fixedRows : 0;
-    if (wantCols_ > 0 && wantRows_ > 0) {
-        lastApply_ = GetTickCount64();
-        applySize(wantCols_, wantRows_);
-    }
     return true;
 }
 
@@ -459,7 +528,15 @@ void Term::leave() {
     DWORD wrote = 0;
     WriteConsoleW(hOut_, fin, (DWORD)wcslen(fin), &wrote, nullptr);
 
-    // 先にスタイルを戻す。境界のない窓のままサイズを戻すと、枠の太さの違いで
+    // 透過とフォントを先に戻す。フォントは文字セルの大きさが変わるので、
+    // サイズを戻すより前にやらないと復元後の実寸がずれる。
+    if (layered_ && hwnd_) {
+        SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
+        LONG ex = GetWindowLong(hwnd_, GWL_EXSTYLE);
+        SetWindowLong(hwnd_, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+    }
+    if (fontSaved_) SetCurrentConsoleFontEx(hOut_, FALSE, &savedFont_);
+    // 続けてスタイルを戻す。境界のない窓のままサイズを戻すと、枠の太さの違いで
     // 復元後の大きさがずれる。
     if (styleSaved_ && hwnd_) SetWindowLong(hwnd_, GWL_STYLE, savedStyle_);
     // 元の大きさへ戻す。VT はまだ有効なので、モードを戻す前に済ませる。

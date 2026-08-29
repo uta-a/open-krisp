@@ -599,7 +599,10 @@ int App::run() {
     if (!eng_.start(st_.cfg, &startErr)) startErr = L"起動に失敗: " + startErr;
     startedAt_ = GetTickCount64();
 
-    if (!term_.enter(kFixedCols, kFixedRows, &err)) {
+    // 自分で開いた窓かどうか。main.cpp が conhost で開き直すときに立てる。
+    const bool ownWindow =
+        GetEnvironmentVariableW(L"OPENKRISP_CONHOST_CHILD", nullptr, 0) != 0;
+    if (!term_.enter(kFixedCols, kFixedRows, ownWindow, st_.style, &err)) {
         eng_.stop();
         errw(L"[エラー] " + err + L"\n"
              L"TUI を使えない環境です。引数を付けたヘッドレス起動をお使いください"
@@ -617,6 +620,11 @@ int App::run() {
     applyGlobalHotkey();
 
     if (!startErr.empty()) toast(startErr, ATTR_RED);
+    else if (term_.appliedFont().empty())
+        toast(L"フォントを設定できませんでした（" + st_.style.fontFace + L"）", ATTR_YELLOW);
+    else if (term_.appliedFont() != st_.style.fontFace)
+        toast(st_.style.fontFace + L" は使えないので " + term_.appliedFont() + L" にしました",
+              ATTR_YELLOW);
     else if (!term_.sizeLocked())
         toast(L"端末サイズを固定できませんでした（表示が崩れる場合は手動で広げてください）",
               ATTR_YELLOW);
