@@ -97,9 +97,15 @@ bool loadSettings(Settings* out) {
     num(L"audio.agc_target",     s.cfg.agcTarget);
     boolean(L"ui.ascii",         s.ascii);
     s.asciiSet = (kv.find(L"ui.ascii") != kv.end());
+    {
+        std::wstring t;
+        str(L"ui.theme", t);
+        if (!t.empty()) parseTheme(t, &s.theme);
+    }
     str(L"ui.font",              s.style.fontFace);
     integer(L"ui.font_size",     s.style.fontSize);
     integer(L"ui.opacity",       s.style.opacity);
+    boolean(L"ui.conhost",       s.useConhost);
     if (s.style.fontSize < 8 || s.style.fontSize > 72) s.style.fontSize = 16;
     if (s.style.opacity  < 30 || s.style.opacity  > 100) s.style.opacity = 95;
 
@@ -174,6 +180,12 @@ bool saveSettings(const Settings& s, std::wstring* err) {
     t += L"; ascii=1 で罫線とメーターを ASCII にする（枠がずれる端末向け）\n";
     t += L"; この行を消すと、起動時に端末を実測して自動で決める\n";
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"ascii=%d\n", s.ascii ? 1 : 0);
+    t += buf;
+    t += L"; theme は claude-dark / powershell（T キーで切替）\n";
+    t += std::wstring(L"theme=") + themeName(s.theme) + L"\n";
+    t += L"; conhost=0 にすると開き直さず、起動した端末でそのまま動く\n";
+    t += L"; （その場合ウィンドウサイズは固定できず、下の font/opacity も効かない）\n";
+    _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"conhost=%d\n", s.useConhost ? 1 : 0);
     t += buf;
     t += L"; font / font_size / opacity は conhost で開き直した窓にだけ効く\n";
     t += L"; font_size は文字セルの高さ(px)、opacity は 30-100（100 で不透明）\n";

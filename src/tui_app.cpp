@@ -333,7 +333,7 @@ void App::renderMain(int cols, int rows) {
                                    gl.up, gl.down, gl.left, gl.right,
                                    formatKeyBinding(st_.muteKey).c_str()),
                                cols - 2, gl.ellipsis), ATTR_DIM);
-    scr_.put(1, f2, truncWidth(L"S 保存   R デバイス再検索   A 字形   Q 終了",
+    scr_.put(1, f2, truncWidth(L"S 保存   R デバイス再検索   T 配色   A 字形   Q 終了",
                                cols - 2, gl.ellipsis), ATTR_DIM);
 
     if (!msg_.empty() && GetTickCount64() < msgUntil_)
@@ -565,6 +565,13 @@ void App::onKeyMain(const TermEvent& ev) {
             return eng_.setDevices(c.inMatch, c.outMatch, e);
         });
         break;
+    case L'T':
+        st_.theme = (st_.theme == Theme::PowerShell) ? Theme::ClaudeDark : Theme::PowerShell;
+        setTheme(st_.theme);
+        term_.syncWindowTheme();   // タイトルバーも追従させる
+        scr_.invalidate();
+        toast(std::wstring(L"配色: ") + themeName(st_.theme) + L"（S で保存）");
+        break;
     case L'A':
         st_.ascii = !st_.ascii;
         st_.asciiSet = true;          // 自動判定より利用者の指定を優先する
@@ -593,6 +600,7 @@ int App::run() {
 
     // 前回の設定があれば復元する（無ければ既定値のまま）
     loadSettings(&st_);
+    setTheme(st_.theme);   // enter() がタイトルバーの色を合わせるより前に決める
 
     // 起動に失敗しても TUI は開く。デバイスを挿し直して R や一覧から選び直せる。
     std::wstring startErr;

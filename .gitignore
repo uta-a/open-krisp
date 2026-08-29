@@ -1,4 +1,5 @@
 /build/
+/build-inplace/
 /.venv/
 probe/*.exe
 probe/*.obj

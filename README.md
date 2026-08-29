@@ -102,6 +102,10 @@ build\openkrisp.exe
 conhost（従来のコンソール窓）で開き直します。** タブの中ではウィンドウサイズを
 固定できないためです。引数を付けたヘッドレス起動は開き直さず、その端末で動きます。
 
+開き直さずに**起動した端末のなかでそのまま動かしたい**場合は、`openkrisp.ini` に
+`[ui] conhost=0` と書いてください。その場合はウィンドウサイズを固定できず、
+`font` / `opacity` も効きません（端末側の設定が使われます）。
+
 | キー | 動作 |
 |---|---|
 | `↑` `↓` | 行を選ぶ |
@@ -159,9 +163,19 @@ Windows Terminal の設定に合わせてあります。既定値は次のとお
 
 | 項目 | 既定値 | 備考 |
 |---|---|---|
-| 配色 | スキーム `Claude Dark`（背景 `#0D0D0F` / 前景 `#FAF9F5`） | 端末の既定色に任せず 24bit で自前指定 |
+| 配色 | `claude-dark`（背景 `#0D0D0F` / 前景 `#FAF9F5`） | `[ui] theme`。`T` キーで切替 |
 | フォント | `JetBrainsMono NFM` / セル高 16px | `[ui] font` `[ui] font_size` |
 | 透過 | 95% | `[ui] opacity`。30〜100 |
+
+配色は 2 つ用意してあり、`T` キーでその場で切り替えられます（`S` で保存）。
+
+| `theme` | 背景 | 由来 |
+|---|---|---|
+| `claude-dark` | `#0D0D0F` | 利用者の Windows Terminal のスキーム |
+| `powershell` | `#012456` | Windows PowerShell のコンソールの既定 |
+
+**タイトルバーと窓の枠も配色の背景色に合わせます**（Windows 11 のみ）。既定のままだと
+タイトルバーだけ Windows の色で浮いて見えるためです。配色を切り替えると追従します。
 
 フォントと透過は **conhost で開き直した窓にだけ効きます**（Windows Terminal 配下では
 端末側の設定が使われます）。透過は conhost 自身の機能（`Ctrl+Shift+ホイール`）と
@@ -257,6 +271,8 @@ global_mute=なし
 
 [ui]
 ascii=0
+theme=claude-dark
+conhost=1
 font=JetBrainsMono NFM
 font_size=16
 opacity=95

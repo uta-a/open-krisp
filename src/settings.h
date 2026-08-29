@@ -25,6 +25,11 @@ struct Settings {
 
     // conhost で開き直した窓の見た目（フォントと透過）
     TermStyle style;
+    // 配色
+    Theme theme = Theme::ClaudeDark;
+    // TUI を conhost で開き直すか。false なら呼び出し元の端末でそのまま動く
+    // （Windows Terminal のタブの中など）。その場合ウィンドウサイズは固定できない。
+    bool useConhost = true;
 };
 
 // exe と同じフォルダの openkrisp.ini のフルパス。

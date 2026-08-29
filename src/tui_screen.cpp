@@ -1,5 +1,8 @@
 #include "tui_screen.h"
 #include <algorithm>
+#include <dwmapi.h>
+
+#pragma comment(lib, "dwmapi.lib")
 
 // GetConsoleWindow のスタイルを触ってリサイズを塞ぐのに要る。
 // CMakeLists.txt にリンク指定を足さずに済ませるため、ここで指定する。
@@ -175,29 +178,62 @@ void Screen::hsep(int x, int y, int w, uint16_t attr) {
     put(x + w - 1, y, gl.mr, attr);
 }
 
-// 配色は利用者の Windows Terminal のスキーム "Claude Dark" に合わせてある。
-// 端末の既定色に任せず自前で塗るのは、conhost で開き直したときに配色が
-// 利用者の conhost 側の設定次第でばらつくのと、背景を塗らないと枠の外が
-// 浮いて見えるため。
 namespace {
 struct Rgb { unsigned char r, g, b; };
-const Rgb kBg     = { 0x0D, 0x0D, 0x0F };   // background
-const Rgb kFg     = { 0xFA, 0xF9, 0xF5 };   // foreground
-const Rgb kDim    = { 0x6C, 0x6A, 0x64 };   // brightBlack
-const Rgb kCyan   = { 0xB8, 0xCB, 0xD2 };   // brightCyan
-const Rgb kGreen  = { 0x7F, 0xCB, 0x90 };   // brightGreen
-const Rgb kYellow = { 0xE8, 0xA5, 0x5A };   // brightYellow
-const Rgb kRed    = { 0xD9, 0x62, 0x62 };   // brightRed
+struct Palette { Rgb bg, fg, dim, cyan, green, yellow, red; };
+
+// 利用者の Windows Terminal のスキーム "Claude Dark"
+const Palette kClaudeDark = {
+    { 0x0D, 0x0D, 0x0F },   // background
+    { 0xFA, 0xF9, 0xF5 },   // foreground
+    { 0x6C, 0x6A, 0x64 },   // brightBlack
+    { 0xB8, 0xCB, 0xD2 },   // brightCyan
+    { 0x7F, 0xCB, 0x90 },   // brightGreen
+    { 0xE8, 0xA5, 0x5A },   // brightYellow
+    { 0xD9, 0x62, 0x62 },   // brightRed
+};
+// Windows PowerShell のコンソールの既定。淡色は背景が濃紺なので青寄りにする。
+const Palette kPowerShell = {
+    { 0x01, 0x24, 0x56 },
+    { 0xEE, 0xED, 0xF0 },
+    { 0x8A, 0x9B, 0xB8 },
+    { 0x61, 0xD6, 0xD6 },
+    { 0x16, 0xC6, 0x0C },
+    { 0xF9, 0xF1, 0xA5 },
+    { 0xE7, 0x48, 0x56 },
+};
+
+// 画面は 1 つしかないので、選択中の配色はここに持つ。
+Theme    g_theme = Theme::ClaudeDark;
+const Palette* g_pal = &kClaudeDark;
 } // namespace
+
+void setTheme(Theme t) {
+    g_theme = t;
+    g_pal = (t == Theme::PowerShell) ? &kPowerShell : &kClaudeDark;
+}
+
+Theme currentTheme() { return g_theme; }
+
+const wchar_t* themeName(Theme t) {
+    return (t == Theme::PowerShell) ? L"powershell" : L"claude-dark";
+}
+
+bool parseTheme(const std::wstring& s, Theme* out) {
+    if (_wcsicmp(s.c_str(), L"powershell") == 0)  { *out = Theme::PowerShell;  return true; }
+    if (_wcsicmp(s.c_str(), L"claude-dark") == 0) { *out = Theme::ClaudeDark; return true; }
+    return false;
+}
 
 // 属性を SGR シーケンスへ。属性が変わるところでだけ出す。
 static void appendSgr(std::wstring& o, uint16_t a) {
-    Rgb fg = kFg, bg = kBg;
-    if (a & ATTR_DIM)    fg = kDim;
-    if (a & ATTR_CYAN)   fg = kCyan;
-    if (a & ATTR_GREEN)  fg = kGreen;
-    if (a & ATTR_YELLOW) fg = kYellow;
-    if (a & ATTR_RED)    fg = kRed;
+    const Palette& p = *g_pal;
+    Rgb fg = p.fg, bg = p.bg;
+    if (a & ATTR_DIM)    fg = p.dim;
+    if (a & ATTR_CYAN)   fg = p.cyan;
+    if (a & ATTR_GREEN)  fg = p.green;
+    if (a & ATTR_YELLOW) fg = p.yellow;
+    if (a & ATTR_RED)    fg = p.red;
     if (a & ATTR_REV)    { Rgb t = fg; fg = bg; bg = t; }
     wchar_t buf[72];
     _snwprintf_s(buf, _countof(buf), _TRUNCATE,
@@ -414,6 +450,25 @@ void Term::applyStyle(const TermStyle& style) {
     }
 }
 
+// タイトルバー・枠・キャプション文字を配色に合わせる。
+// 既定のままだと Windows のタイトルバーの色と画面の背景色が食い違って、
+// 窓の上だけ浮いて見えるため。
+// Windows 11 (build 22000) 以降でのみ有効。それ以前は E_INVALIDARG が返るだけ。
+void Term::syncWindowTheme() {
+    if (!hwnd_) return;
+    const Palette& p = *g_pal;
+    const COLORREF bg = RGB(p.bg.r, p.bg.g, p.bg.b);
+    const COLORREF fg = RGB(p.fg.r, p.fg.g, p.fg.b);
+    // dwmapi.h のバージョンによっては未定義なので数値で渡す
+    const DWORD kBorderColor  = 34;   // DWMWA_BORDER_COLOR
+    const DWORD kCaptionColor = 35;   // DWMWA_CAPTION_COLOR
+    const DWORD kTextColor    = 36;   // DWMWA_TEXT_COLOR
+    DwmSetWindowAttribute(hwnd_, kCaptionColor, &bg, sizeof(bg));
+    DwmSetWindowAttribute(hwnd_, kBorderColor,  &bg, sizeof(bg));
+    DwmSetWindowAttribute(hwnd_, kTextColor,    &fg, sizeof(fg));
+    themedWindow_ = true;
+}
+
 void Term::enforceSize() {
     if (!entered_ || wantCols_ <= 0 || wantRows_ <= 0) return;
     int c = 0, r = 0;
@@ -490,6 +545,7 @@ bool Term::enter(int fixedCols, int fixedRows, bool ownWindow,
     // フォントはサイズ合わせより先に。文字セルの大きさが変わると窓の実寸も
     // 変わるので、順序を逆にすると合わせた直後にずれる。
     applyStyle(style);
+    syncWindowTheme();
 
     // サイズ合わせは代替画面へ入る前に行う。conhost の代替バッファは
     // SetConsoleScreenBufferSize を受け付けず、バッファだけ元の高さ(既定9001行)の
@@ -536,6 +592,12 @@ void Term::leave() {
         SetWindowLong(hwnd_, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
     }
     if (fontSaved_) SetCurrentConsoleFontEx(hOut_, FALSE, &savedFont_);
+    if (themedWindow_ && hwnd_) {
+        const COLORREF def = 0xFFFFFFFF;   // DWMWA_COLOR_DEFAULT
+        DwmSetWindowAttribute(hwnd_, 35, &def, sizeof(def));
+        DwmSetWindowAttribute(hwnd_, 34, &def, sizeof(def));
+        DwmSetWindowAttribute(hwnd_, 36, &def, sizeof(def));
+    }
     // 続けてスタイルを戻す。境界のない窓のままサイズを戻すと、枠の太さの違いで
     // 復元後の大きさがずれる。
     if (styleSaved_ && hwnd_) SetWindowLong(hwnd_, GWL_STYLE, savedStyle_);

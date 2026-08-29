@@ -21,6 +21,7 @@
 #include "engine.h"
 #include "cli.h"
 #include "tui_app.h"
+#include "settings.h"
 #include <windows.h>
 #include <cstdio>
 #include <string>
@@ -78,7 +79,11 @@ int wmain(int argc, wchar_t** argv) {
 
     // TUI を開くときだけ、必要なら本物のコンソールウィンドウで開き直す。
     // ヘッドレス起動は呼び出し元の端末で動かしたいので対象外。
-    if (argc == 1 && !inRealConhost() &&
+    // 開き直すかどうかは ini で切れるようにしてある（[ui] conhost=0）。
+    // 判定が引数解析より前に要るので、ここで設定を先読みする。
+    Settings pre;
+    loadSettings(&pre);
+    if (argc == 1 && pre.useConhost && !inRealConhost() &&
         GetEnvironmentVariableW(kRelaunchFlag, nullptr, 0) == 0) {
         if (relaunchInConhost()) {
             fputs("ウィンドウサイズを固定するため、別ウィンドウで開き直しました。\n", stdout);

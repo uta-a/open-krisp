@@ -25,6 +25,19 @@ int strWidth(const std::wstring& s);
 // 表示幅が maxW を超えないよう末尾を詰める。切った場合は ell を付ける。
 std::wstring truncWidth(const std::wstring& s, int maxW, const wchar_t* ell);
 
+// --- 配色 -----------------------------------------------------------------
+// 端末の既定色に任せず自前で塗る。conhost で開き直したときに配色が利用者の
+// conhost 側の設定次第でばらつくのと、背景を塗らないと枠の外が浮いて見えるため。
+enum class Theme {
+    ClaudeDark,   // 利用者の Windows Terminal のスキーム "Claude Dark"
+    PowerShell,   // Windows PowerShell のコンソールの既定（濃紺）
+};
+void  setTheme(Theme t);
+Theme currentTheme();
+// "claude-dark" / "powershell" との相互変換。解釈できなければ false。
+bool  parseTheme(const std::wstring& s, Theme* out);
+const wchar_t* themeName(Theme t);
+
 // --- 表示属性 -------------------------------------------------------------
 enum Attr : uint16_t {
     ATTR_NONE   = 0,
@@ -127,6 +140,9 @@ public:
     // リサイズされてしまったときに、要求サイズへ戻すよう再要求する。
     // WINDOW_BUFFER_SIZE_EVENT を受けたら呼ぶ。既に要求どおりなら何もしない。
     void enforceSize();
+    // タイトルバーと枠の色を、いま選ばれている配色の背景色に合わせる。
+    // 配色を切り替えたあとにも呼ぶこと。Windows 11 でしか効かない。
+    void syncWindowTheme();
     // 要求どおりのサイズになっているか（画面側が「小さすぎ」表示に落とす判断に使う）。
     // 直近の size() の測定結果で決まる。
     bool sizeLocked() const { return sizeLocked_; }
@@ -170,6 +186,7 @@ private:
     bool   fontSaved_ = false;
     std::wstring appliedFont_;
     bool   layered_ = false;      // 透過のために WS_EX_LAYERED を足したか
+    bool   themedWindow_ = false; // タイトルバーの色を変えたか
     int    savedWinCols_ = 0, savedWinRows_ = 0;
     COORD  savedBuf_ = { 0, 0 };
     HWND   hwnd_ = nullptr;
