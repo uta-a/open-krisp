@@ -26,9 +26,6 @@ Discord に同梱される Krisp のノイズ抑制（NC）を、Discord 以外�
 - したがって本ツールは **自分のマシン内での個人利用に限定**してください。モジュール
   ファイルはこのリポジトリに含めず、Discord のインストール先から**その場で読み込むだけ**に
   しています（コピー・同梱しない）。
-- **ウィンドウのアイコンも Discord のものを実行時に借りています**（`Discord.exe` から
-  `ExtractIconEx` で取得。リポジトリには含めません）。Discord のロゴは同社の商標なので、
-  この状態のまま第三者へ配布しないでください。
 - 正規の手段が必要なら、**Krisp 公式アプリ**（単体版があり、本マシンにも導入済み）や
   NVIDIA RTX Voice などを利用してください。
 
@@ -182,6 +179,10 @@ Windows Terminal の設定に合わせてあります。既定値は次のとお
 
 **タイトルバーと窓の枠も配色の背景色に合わせます**（Windows 11 のみ）。既定のままだと
 タイトルバーだけ Windows の色で浮いて見えるためです。配色を切り替えると追従します。
+
+アイコンは `res/openkrisp.ico` を exe に埋め込んでいます。conhost で開き直すと窓は
+conhost.exe のものになるため、起動時に `WM_SETICON` で付け直しています。
+差し替えるときは `res/openkrisp.png` を置き換えて `res\make-icon.ps1` を実行してください。
 
 フォントと透過は **conhost で開き直した窓にだけ効きます**（Windows Terminal 配下では
 端末側の設定が使われます）。透過は conhost 自身の機能（`Ctrl+Shift+ホイール`）と
@@ -383,6 +384,11 @@ Node の N-API に加えて **プレーンな C 関数**をエクスポートし
 ```
 CMakeLists.txt
 build.ps1           vcvars64 の読み込み＋CMake の構成・ビルド
+res/
+  openkrisp.png     アイコンの元画像
+  openkrisp.ico     上を 16〜256px の 9 サイズにまとめたもの
+  openkrisp.rc      exe へ埋め込むリソース定義
+  make-icon.ps1     png から ico を作り直す
 src/
   main.cpp          エントリ。引数の有無で TUI / ヘッドレスに分岐するだけ
   cli.h/.cpp        ヘッドレス動作（1行ステータス表示）

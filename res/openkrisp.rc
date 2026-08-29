@@ -1,0 +1,4 @@
+// exe に埋め込むリソース。
+// 一番小さい番号のアイコンがエクスプローラーやタスクバーで使われるので 1 を割り当てる。
+// openkrisp.ico は res/openkrisp.png から生成したもの（res/README.md 参照）。
+1 ICON "openkrisp.ico"

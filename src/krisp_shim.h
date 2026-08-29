@@ -53,10 +53,6 @@ public:
     // Discord 各ブランチの discord_krisp.node を新しい順に探索して返す。
     static std::vector<std::wstring> findModules();
 
-    // Discord 本体の exe のパス。見つからなければ空。
-    // アイコンをその場で借りるために使う（ファイルは複製しない）。
-    static std::wstring findDiscordExe();
-
 private:
     HMODULE mod_ = nullptr;
     std::wstring moduleDir_;

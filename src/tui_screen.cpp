@@ -1,10 +1,8 @@
 #include "tui_screen.h"
 #include <algorithm>
 #include <dwmapi.h>
-#include <shellapi.h>   // ExtractIconExW（WIN32_LEAN_AND_MEAN で外れるので明示）
 
 #pragma comment(lib, "dwmapi.lib")
-#pragma comment(lib, "shell32.lib")
 
 // GetConsoleWindow のスタイルを触ってリサイズを塞ぐのに要る。
 // CMakeLists.txt にリンク指定を足さずに済ませるため、ここで指定する。
@@ -502,16 +500,19 @@ void Term::syncWindowTheme() {
     themedWindow_ = true;
 }
 
-// 窓のアイコンを差し替える。Discord のアイコンをその場で借りるために使う。
-// アイコンをこちらのリポジトリへ取り込まないのは、モジュールを複製せず
-// インストール先から読むだけ、という本ツールの方針に揃えるため。
-void Term::setWindowIcon(const std::wstring& sourceExe) {
-    if (!hwnd_ || sourceExe.empty()) return;
+// 窓のアイコンを自分の exe に埋めたものに差し替える。
+// conhost で開き直すと窓は conhost.exe のものになり、そのままでは conhost の
+// アイコンが出てしまうので、明示的に付け直す必要がある。
+void Term::setWindowIcon() {
+    if (!hwnd_) return;
+    HMODULE self = GetModuleHandleW(nullptr);
     // 変数名に small は使えない（rpcndr.h が char へ define している）
-    HICON big = nullptr, sm = nullptr;
-    if (ExtractIconExW(sourceExe.c_str(), 0, &big, &sm, 1) == UINT_MAX) return;
-    if (!big && !sm) return;
-
+    HICON big = (HICON)LoadImageW(self, MAKEINTRESOURCEW(kAppIconId), IMAGE_ICON,
+                                  GetSystemMetrics(SM_CXICON),
+                                  GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    HICON sm  = (HICON)LoadImageW(self, MAKEINTRESOURCEW(kAppIconId), IMAGE_ICON,
+                                  GetSystemMetrics(SM_CXSMICON),
+                                  GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
     if (big) {
         SendMessageW(hwnd_, WM_SETICON, ICON_BIG, (LPARAM)big);
         iconBig_ = big;

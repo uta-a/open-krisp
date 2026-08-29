@@ -25,6 +25,9 @@ int strWidth(const std::wstring& s);
 // 表示幅が maxW を超えないよう末尾を詰める。切った場合は ell を付ける。
 std::wstring truncWidth(const std::wstring& s, int maxW, const wchar_t* ell);
 
+// res/openkrisp.rc でアイコンに割り当てているリソース番号。
+const int kAppIconId = 1;
+
 // --- 配色 -----------------------------------------------------------------
 // 端末の既定色に任せず自前で塗る。conhost で開き直したときに配色が利用者の
 // conhost 側の設定次第でばらつくのと、背景を塗らないと枠の外が浮いて見えるため。
@@ -144,9 +147,9 @@ public:
     // タイトルバーと枠の色を、いま選ばれている配色の背景色に合わせる。
     // 配色を切り替えたあとにも呼ぶこと。Windows 11 でしか効かない。
     void syncWindowTheme();
-    // sourceExe が持つアイコンをこの窓のアイコンにする（大小とも）。
-    // ファイルは読むだけで複製しない。空パスや取得失敗なら何もしない。
-    void setWindowIcon(const std::wstring& sourceExe);
+    // 自分の exe に埋めたアイコン（res/openkrisp.ico）を窓のアイコンにする。
+    // conhost で開き直すと窓は conhost.exe のものなので、明示的に付け直す。
+    void setWindowIcon();
     // 要求どおりのサイズになっているか（画面側が「小さすぎ」表示に落とす判断に使う）。
     // 直近の size() の測定結果で決まる。
     bool sizeLocked() const { return sizeLocked_; }

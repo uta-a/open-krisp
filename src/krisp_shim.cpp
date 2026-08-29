@@ -55,48 +55,6 @@ std::vector<std::wstring> KrispShim::findModules() {
     return dirs;
 }
 
-// %LOCALAPPDATA%\Discord*\app-*\Discord.exe を新しい順に探し、最初の 1 つを返す。
-// アイコンを実行時に借りるためだけに使う。ファイルはコピーしない。
-std::wstring KrispShim::findDiscordExe() {
-    wchar_t local[MAX_PATH];
-    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) return L"";
-
-    std::vector<std::pair<FILETIME, std::wstring>> hits;
-    std::wstring base = local;
-    WIN32_FIND_DATAW fd;
-    HANDLE hBrand = FindFirstFileW((base + L"\\Discord*").c_str(), &fd);
-    if (hBrand == INVALID_HANDLE_VALUE) return L"";
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        std::wstring brand = base + L"\\" + fd.cFileName;
-
-        WIN32_FIND_DATAW ad;
-        HANDLE hApp = FindFirstFileW((brand + L"\\app-*").c_str(), &ad);
-        if (hApp == INVALID_HANDLE_VALUE) continue;
-        do {
-            if (!(ad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            // ブランチによって Discord.exe / DiscordPTB.exe / DiscordCanary.exe
-            std::wstring dir = brand + L"\\" + ad.cFileName;
-            WIN32_FIND_DATAW ed;
-            HANDLE hE = FindFirstFileW((dir + L"\\Discord*.exe").c_str(), &ed);
-            if (hE == INVALID_HANDLE_VALUE) continue;
-            do {
-                if (ed.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-                hits.push_back({ ed.ftLastWriteTime, dir + L"\\" + ed.cFileName });
-            } while (FindNextFileW(hE, &ed));
-            FindClose(hE);
-        } while (FindNextFileW(hApp, &ad));
-        FindClose(hApp);
-    } while (FindNextFileW(hBrand, &fd));
-    FindClose(hBrand);
-
-    if (hits.empty()) return L"";
-    std::sort(hits.begin(), hits.end(), [](const auto& a, const auto& b) {
-        return CompareFileTime(&a.first, &b.first) > 0;  // 新しい順
-    });
-    return hits.front().second;
-}
-
 bool KrispShim::patchSigCheck(std::wstring* err) {
     uint8_t* t = reinterpret_cast<uint8_t*>(mod_) + kSigCheckRva;
     // 想定バイト列でなければ、別バージョンの可能性があるので中止（安全側）

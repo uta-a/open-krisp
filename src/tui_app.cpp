@@ -3,7 +3,6 @@
 #include "engine.h"
 #include "settings.h"
 #include "hotkey.h"
-#include "krisp_shim.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstdarg>
@@ -617,8 +616,7 @@ int App::run() {
     }
     g_term = &term_;
     SetConsoleCtrlHandler(ctrlHandler, TRUE);
-    // Krisp を借りている相手のアイコンをそのまま使う（ファイルは複製しない）
-    term_.setWindowIcon(KrispShim::findDiscordExe());
+    term_.setWindowIcon();
 
     // ini に ui.ascii の指定が無ければ、罫線が全角幅で描かれる端末かを実測して決める。
     // conhost + 日本語フォントだと全角になり、罫線版のままでは枠がずれるため。
