@@ -29,6 +29,7 @@ std::wstring truncWidth(const std::wstring& s, int maxW, const wchar_t* ell);
 // 端末の既定色に任せず自前で塗る。conhost で開き直したときに配色が利用者の
 // conhost 側の設定次第でばらつくのと、背景を塗らないと枠の外が浮いて見えるため。
 enum class Theme {
+    Conhost,      // conhost の既定のタイトルバー色 #202020 を地色にしたもの
     ClaudeDark,   // 利用者の Windows Terminal のスキーム "Claude Dark"
     PowerShell,   // Windows PowerShell のコンソールの既定（濃紺）
 };

@@ -203,6 +203,18 @@ const Palette kPowerShell = {
     { 0xE7, 0x48, 0x56 },
 };
 
+// conhost の既定のタイトルバー色を地色にしたもの。窓全体が一色になる。
+// 淡色は背景が少し明るいぶん、Claude Dark より上げてある。
+const Palette kConhost = {
+    { 0x20, 0x20, 0x20 },
+    { 0xFA, 0xF9, 0xF5 },
+    { 0x7A, 0x78, 0x72 },
+    { 0xB8, 0xCB, 0xD2 },
+    { 0x7F, 0xCB, 0x90 },
+    { 0xE8, 0xA5, 0x5A },
+    { 0xD9, 0x62, 0x62 },
+};
+
 // 画面は 1 つしかないので、選択中の配色はここに持つ。
 Theme    g_theme = Theme::ClaudeDark;
 const Palette* g_pal = &kClaudeDark;
@@ -210,18 +222,27 @@ const Palette* g_pal = &kClaudeDark;
 
 void setTheme(Theme t) {
     g_theme = t;
-    g_pal = (t == Theme::PowerShell) ? &kPowerShell : &kClaudeDark;
+    switch (t) {
+    case Theme::PowerShell: g_pal = &kPowerShell; break;
+    case Theme::ClaudeDark: g_pal = &kClaudeDark; break;
+    default:                g_pal = &kConhost;    break;
+    }
 }
 
 Theme currentTheme() { return g_theme; }
 
 const wchar_t* themeName(Theme t) {
-    return (t == Theme::PowerShell) ? L"powershell" : L"claude-dark";
+    switch (t) {
+    case Theme::PowerShell: return L"powershell";
+    case Theme::ClaudeDark: return L"claude-dark";
+    default:                return L"conhost";
+    }
 }
 
 bool parseTheme(const std::wstring& s, Theme* out) {
-    if (_wcsicmp(s.c_str(), L"powershell") == 0)  { *out = Theme::PowerShell;  return true; }
+    if (_wcsicmp(s.c_str(), L"powershell") == 0)  { *out = Theme::PowerShell; return true; }
     if (_wcsicmp(s.c_str(), L"claude-dark") == 0) { *out = Theme::ClaudeDark; return true; }
+    if (_wcsicmp(s.c_str(), L"conhost") == 0)     { *out = Theme::Conhost;    return true; }
     return false;
 }
 
@@ -343,6 +364,16 @@ bool setConsoleGeometry(HANDLE hOut, int winCols, int winRows, COORD buf) {
     SetConsoleScreenBufferSize(hOut, buf);
     SMALL_RECT win = { 0, 0, (SHORT)(winCols - 1), (SHORT)(winRows - 1) };
     return SetConsoleWindowInfo(hOut, TRUE, &win) != 0;
+}
+
+// このコンソールに繋がっているのが自分だけか。
+// シェル(cmd/powershell)が同じコンソールに居れば、その窓は利用者のもので、
+// スクロールバッファを縮めるとそれまでの出力履歴が消えてしまう。
+// 自分しか居なければ（ダブルクリック起動や、こちらが開き直した窓）遠慮は要らない。
+bool soleConsoleClient() {
+    DWORD pids[8] = {};
+    DWORD n = GetConsoleProcessList(pids, (DWORD)(sizeof(pids) / sizeof(pids[0])));
+    return n == 1;
 }
 
 // XTWINOPS でのリサイズ要求。Windows Terminal / ConPTY はコンソール API では
@@ -484,7 +515,9 @@ void Term::enforceSize() {
 
 bool Term::enter(int fixedCols, int fixedRows, bool ownWindow,
                  const TermStyle& style, std::wstring* err) {
-    ownWindow_ = ownWindow;
+    // 呼び出し側が「自分で開いた」と言っていなくても、このコンソールに
+    // 自分しか繋がっていなければ実質こちらの窓（ダブルクリック起動など）。
+    ownWindow_ = ownWindow || soleConsoleClient();
     hOut_ = GetStdHandle(STD_OUTPUT_HANDLE);
     hIn_  = GetStdHandle(STD_INPUT_HANDLE);
     if (hOut_ == INVALID_HANDLE_VALUE || hIn_ == INVALID_HANDLE_VALUE) {
@@ -574,6 +607,20 @@ bool Term::enter(int fixedCols, int fixedRows, bool ownWindow,
     WriteConsoleW(hOut_, init.c_str(), (DWORD)init.size(), &wrote, nullptr);
     entered_ = true;
     left_.store(false);
+
+    // スクロールバーを落とすのは最後。conhost はバッファや窓の大きさを
+    // 変えるたびにスクロールバーの要否を計算し直してスタイルを付け直すので、
+    // サイズ合わせより前に外しても戻ってしまう。
+    // バッファを窓ぴったりに縮められた窓では元々出ないが、利用者のシェルが
+    // 同居していて縮められなかった窓ではここで消える。
+    if (hwnd_) {
+        LONG s = GetWindowLong(hwnd_, GWL_STYLE);
+        if (s & (WS_VSCROLL | WS_HSCROLL)) {
+            SetWindowLong(hwnd_, GWL_STYLE, s & ~WS_VSCROLL & ~WS_HSCROLL);
+            SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        }
+    }
     return true;
 }
 

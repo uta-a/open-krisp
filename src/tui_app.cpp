@@ -287,7 +287,7 @@ void App::renderMain(int cols, int rows) {
     scr_.put(valueX, yMute, muted ? L"ON " : L"OFF", muted ? (ATTR_BOLD | ATTR_RED) : ATTR_DIM);
     scr_.put(valueX + 7, yMute,
              muted ? std::wstring(L"マイクを止めています")
-                   : formatKeyBinding(st_.muteKey) + L" で切替",
+                   : formatKeyBinding(st_.muteKey) + L" で切替（この画面でのみ）",
              muted ? ATTR_RED : ATTR_DIM);
     // ノイズ抑制
     label(yNc, L"ノイズ抑制", R_NC);
@@ -316,7 +316,8 @@ void App::renderMain(int cols, int rows) {
         if (st_.globalMuteKey.assigned() && !on)
             scr_.put(valueX + 16, yGlobalKey, L"登録できず", ATTR_RED);
         else if (!st_.globalMuteKey.assigned())
-            scr_.put(valueX + 16, yGlobalKey, L"他アプリ中でも効く", ATTR_DIM);
+            // 「M が裏で効かない」と誤解されやすいので、割り当て方を促す
+            scr_.put(valueX + 16, yGlobalKey, L"Enter で割り当て", ATTR_YELLOW);
     }
     // モデル（切替は未対応なので淡色）
     scr_.put(labelX, yModel, padTo(L"モデル", kLabelW), ATTR_DIM);
@@ -566,7 +567,10 @@ void App::onKeyMain(const TermEvent& ev) {
         });
         break;
     case L'T':
-        st_.theme = (st_.theme == Theme::PowerShell) ? Theme::ClaudeDark : Theme::PowerShell;
+        // conhost -> claude-dark -> powershell -> conhost と巡回する
+        st_.theme = (st_.theme == Theme::Conhost)    ? Theme::ClaudeDark
+                  : (st_.theme == Theme::ClaudeDark) ? Theme::PowerShell
+                                                     : Theme::Conhost;
         setTheme(st_.theme);
         term_.syncWindowTheme();   // タイトルバーも追従させる
         scr_.invalidate();
