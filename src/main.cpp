@@ -1,18 +1,18 @@
-// krisp-bridge : Discord 同梱の Krisp NC を使い、任意マイクの入力をノイズ除去して
+// OpenKrisp : Discord 同梱の Krisp NC を使い、任意マイクの入力をノイズ除去して
 // 仮想オーディオケーブル(既定: VB-CABLE の "CABLE Input")へ流す常駐ブリッジ。
 //
 // チェーン: [実マイク] → 本アプリ(Krisp NC) → CABLE Input →(仮想)→ CABLE Output → 通話アプリ
 //
 // 使い方:
-//   krisp-bridge --list                入出力デバイス一覧
-//   krisp-bridge                       既定(入力=最初の非CABLEマイク, 出力=CABLE Input)
-//   krisp-bridge --in fifine --out "CABLE Input"
-//   krisp-bridge --suppression 100     抑制強度(0-100, 既定100)
-//   krisp-bridge --duration 20         Krisp フレーム長ms(10/15/20/30/32, 既定10)
-//                                       大きいほど文脈が増え発話保持が安定する場合がある
-//                                       (その分レイテンシ増)。実音声で聴き比べて調整。
-//   krisp-bridge --no-agc              AGC(音量自動調整)を無効化（既定は ON）
-//   krisp-bridge --agc-target 0.10     AGC の目標音量(0..1, 既定0.10)。大きいほど大音量
+//   openkrisp --list                入出力デバイス一覧
+//   openkrisp                       既定(入力=最初の非CABLEマイク, 出力=CABLE Input)
+//   openkrisp --in fifine --out "CABLE Input"
+//   openkrisp --suppression 100     抑制強度(0-100, 既定100)
+//   openkrisp --duration 20         Krisp フレーム長ms(10/15/20/30/32, 既定10)
+//                                    大きいほど文脈が増え発話保持が安定する場合がある
+//                                    (その分レイテンシ増)。実音声で聴き比べて調整。
+//   openkrisp --no-agc              AGC(音量自動調整)を無効化（既定は ON）
+//   openkrisp --agc-target 0.10     AGC の目標音量(0..1, 既定0.10)。大きいほど大音量
 //
 // 法的注意: 本ツールは Krisp の署名検証を回避する。個人利用限定・再配布禁止。
 #include "krisp_shim.h"

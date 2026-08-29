@@ -1,4 +1,4 @@
-# krisp-bridge
+# OpenKrisp
 
 Discord に同梱される Krisp のノイズ抑制（NC）を、Discord 以外の通話アプリ
 （Zoom / Teams / ブラウザ通話など）でも使えるようにする常駐ブリッジです。
@@ -8,7 +8,7 @@ Discord に同梱される Krisp のノイズ抑制（NC）を、Discord 以外�
 出力（"CABLE Output"）をマイクとして選ぶだけで、ノイズ除去済みの音声が使えます。
 
 ```
-[実マイク] → krisp-bridge (Krisp NC) → CABLE Input →(仮想ケーブル)→ CABLE Output → 通話アプリ
+[実マイク] → OpenKrisp (Krisp NC) → CABLE Input →(仮想ケーブル)→ CABLE Output → 通話アプリ
 ```
 
 **Discord の起動は不要**です。自プロセス内で `discord_krisp.node` を読み込んで処理します。
@@ -44,14 +44,18 @@ Discord に同梱される Krisp のノイズ抑制（NC）を、Discord 以外�
 
 ## ビルド
 
-VS の x64 ネイティブ環境（`vcvars64.bat` を通したシェル）で:
+```powershell
+.\build.ps1          # vcvars64 を読み込んで構成＋ビルド
+.\build.ps1 -Clean   # build/ を作り直してから
+```
+
+`build\openkrisp.exe` が生成されます。VS の x64 ネイティブ環境
+（`vcvars64.bat` を通したシェル）なら、直接 CMake を叩いても構いません:
 
 ```powershell
 cmake -S . -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
-
-`build\krisp-bridge.exe` が生成されます。
 
 ---
 
@@ -65,18 +69,18 @@ WASAPI 側で変換しますが、48kHz が最も素直です）。
 
 ### 2. デバイス確認
 ```powershell
-build\krisp-bridge.exe --list
+build\openkrisp.exe --list
 ```
 
 ### 3. 起動
 ```powershell
-build\krisp-bridge.exe
+build\openkrisp.exe
 ```
 引数なしの場合、入力は「名前に CABLE を含まない最初のマイク」、出力は "CABLE Input" が
 選ばれます。明示指定も可能です（部分一致・大文字小文字無視）:
 
 ```powershell
-build\krisp-bridge.exe --in fifine --out "CABLE Input"
+build\openkrisp.exe --in fifine --out "CABLE Input"
 ```
 
 起動すると稼働状況（入出力レベル・バッファ充填量・アンダーラン・破棄回数）を
