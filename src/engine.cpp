@@ -155,6 +155,7 @@ bool AudioEngine::startLocked(const EngineConfig& cfg, std::wstring* err) {
 
     krisp_.setSuppression(clampf(cfg.suppression, 0.f, 100.f));
     pBypass_.store(cfg.bypass, std::memory_order_relaxed);
+    pMuted_.store(cfg.muted, std::memory_order_relaxed);
     pAgcOn_.store(cfg.agcEnabled, std::memory_order_relaxed);
     pAgcTarget_.store(clampf(cfg.agcTarget, 0.01f, 0.50f), std::memory_order_relaxed);
     agc_.setTarget(clampf(cfg.agcTarget, 0.01f, 0.50f));
@@ -196,6 +197,12 @@ void AudioEngine::setBypass(bool v) {
     std::lock_guard<std::mutex> lk(ctlMx_);
     cfg_.bypass = v;
     pBypass_.store(v, std::memory_order_relaxed);
+}
+
+void AudioEngine::setMuted(bool v) {
+    std::lock_guard<std::mutex> lk(ctlMx_);
+    cfg_.muted = v;
+    pMuted_.store(v, std::memory_order_relaxed);
 }
 
 void AudioEngine::setSuppression(float v) {
@@ -290,16 +297,32 @@ void AudioEngine::onCapture(const float* p, size_t n) {
     agc_.setEnabled(pAgcOn_.load(std::memory_order_relaxed));
     agc_.setTarget(pAgcTarget_.load(std::memory_order_relaxed));
     const bool bypass = pBypass_.load(std::memory_order_relaxed);
+    const bool muted  = pMuted_.load(std::memory_order_relaxed);
 
     acc_.insert(acc_.end(), p, p + n);
     size_t off = 0;
     while (acc_.size() - off >= frame_) {
         for (size_t i = 0; i < frame_; i++) fin_[i] = acc_[off + i];
-        if (bypass) { for (size_t i = 0; i < frame_; i++) fout_[i] = fin_[i]; }
-        else        { krisp_.ncProcess(sess_, fin_.data(), frame_, fout_.data(), frame_); }
-        agc_.process(fout_.data(), frame_);   // ノイズ除去後に音量を一定化
-        agcGainPub_.store(agc_.gain(), std::memory_order_relaxed);
+        if (muted) {
+            // ミュート中は無音を出すだけなので、Krisp も AGC も回さない。
+            // 無音を推論に通しても結果は無音で、CPU を捨てるだけになる。
+            //
+            // ここで agc_.reset() は呼ばない。process() を飛ばしている間は
+            // ゲインもレベル推定も止まったままで、解除時にはミュート直前の
+            // 状態から続きを再生できる。逆に reset() するとゲインが 1.0 に
+            // 戻り、解除後の数百 ms かけて再収束する間だけ音量が変化して
+            // しまう。「前フレームがミュートだったか」を覚える必要も無い。
+            for (size_t i = 0; i < frame_; i++) fout_[i] = 0.f;
+        } else {
+            if (bypass) { for (size_t i = 0; i < frame_; i++) fout_[i] = fin_[i]; }
+            else        { krisp_.ncProcess(sess_, fin_.data(), frame_, fout_.data(), frame_); }
+            agc_.process(fout_.data(), frame_);   // ノイズ除去後に音量を一定化
+            agcGainPub_.store(agc_.gain(), std::memory_order_relaxed);
+        }
 
+        // 入力ピークはミュート中も更新する。「自分は喋れているが相手には
+        // 届いていない」ことを画面で確かめられるようにするため。
+        // 出力ピークは fout_ が全て 0 なので自動的に 0 のままになる。
         int ipk = (int)(peakOf(fin_.data(), frame_) * 1e6f);
         int opk = (int)(peakOf(fout_.data(), frame_) * 1e6f);
         if (ipk > inPeakMicro_.load(std::memory_order_relaxed))

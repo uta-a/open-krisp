@@ -92,6 +92,7 @@ bool loadSettings(Settings* out) {
     integer(L"audio.duration",   s.cfg.durationMs);
     num(L"audio.suppression",    s.cfg.suppression);
     boolean(L"audio.bypass",     s.cfg.bypass);
+    boolean(L"audio.mute",       s.cfg.muted);
     boolean(L"audio.agc",        s.cfg.agcEnabled);
     num(L"audio.agc_target",     s.cfg.agcTarget);
     boolean(L"ui.ascii",         s.ascii);
@@ -141,9 +142,10 @@ bool saveSettings(const Settings& s, std::wstring* err) {
     t += L"output=" + s.cfg.outMatch + L"\n";
     t += L"\n[audio]\n";
     t += L"; duration は 10/15/20/30/32 のみ、suppression は 0-100\n";
+    t += L"; mute=1 で出力だけ無音にする（マイク自体は動いたまま）\n";
     _snwprintf_s(buf, _countof(buf), _TRUNCATE,
-        L"duration=%d\nsuppression=%.0f\nbypass=%d\nagc=%d\nagc_target=%.3f\n",
-        s.cfg.durationMs, s.cfg.suppression, s.cfg.bypass ? 1 : 0,
+        L"duration=%d\nsuppression=%.0f\nbypass=%d\nmute=%d\nagc=%d\nagc_target=%.3f\n",
+        s.cfg.durationMs, s.cfg.suppression, s.cfg.bypass ? 1 : 0, s.cfg.muted ? 1 : 0,
         s.cfg.agcEnabled ? 1 : 0, s.cfg.agcTarget);
     t += buf;
     t += L"\n[ui]\n";

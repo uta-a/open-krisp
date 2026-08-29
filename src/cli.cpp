@@ -75,6 +75,7 @@ int runCli(int argc, wchar_t** argv, AudioEngine& eng) {
     cfg.inMatch  = argVal(argc, argv, L"--in", L"");
     cfg.outMatch = argVal(argc, argv, L"--out", L"CABLE Input");
     cfg.bypass   = hasFlag(argc, argv, L"--bypass");
+    cfg.muted    = hasFlag(argc, argv, L"--mute");
     cfg.agcEnabled = !hasFlag(argc, argv, L"--no-agc");
     const wchar_t* tArg = argVal(argc, argv, L"--agc-target", L"");
     if (tArg[0]) {
@@ -101,6 +102,8 @@ int runCli(int argc, wchar_t** argv, AudioEngine& eng) {
     outw(L"[OK] 入力: %s\n", st.inName.c_str());
     outw(L"[OK] 出力: %s\n", st.outName.c_str());
     outw(L"[OK] AGC(音量自動調整)=%s\n", cfg.agcEnabled ? L"ON" : L"OFF");
+    // 既定 OFF なので ON のときだけ知らせる。既定起動の出力を増やさないため。
+    if (cfg.muted) outw(L"[OK] ミュート=ON（出力は無音）\n");
 
     SetConsoleCtrlHandler(ctrlHandler, TRUE);
     outw(L"\n▶ %sを開始しました。通話アプリのマイクに「CABLE Output」を選んでください。\n",

@@ -8,7 +8,7 @@
 //   sess_ / frame_ / fin_ / fout_ / acc_ / agc_ は、キャプチャスレッドが join 済みの
 //   ときにのみ UI スレッドから触ってよい。この境界を守るために、再構成を伴う操作は
 //   すべて ctlMx_ の下で stop() → 変更 → start() の順に行う。
-//   音を止めずに変えられる値（bypass / AGC の ON・目標）は atomic で受け渡す。
+//   音を止めずに変えられる値（bypass / mute / AGC の ON・目標）は atomic で受け渡す。
 #pragma once
 #include "krisp_shim.h"
 #include "wasapi_io.h"
@@ -27,6 +27,7 @@ struct EngineConfig {
     int   durationMs  = 10;                  // Krisp フレーム長（10/15/20/30/32 のみ）
     float suppression = 100.f;               // ノイズ抑制の強さ 0..100
     bool  bypass      = false;               // true = Krisp を素通し（切り分け用）
+    bool  muted       = false;               // true ならマイクを止める（出力に無音を流す）
     bool  agcEnabled  = true;                // 音量の自動調整
     float agcTarget   = 0.12f;               // AGC の目標音量 0..1
 };
@@ -63,6 +64,9 @@ public:
 
     // --- 音を止めずに変えられるもの ---
     void setBypass(bool v);
+    void setMuted(bool v);
+    // 毎フレーム描画から呼ばれても ctlMx_ を待たずに済むよう、atomic を直接読む。
+    bool muted() const { return pMuted_.load(std::memory_order_relaxed); }
     void setSuppression(float v);   // 0..100 にクランプ
     void setAgcEnabled(bool v);
     void setAgcTarget(float v);     // 0.01..0.50 にクランプ
@@ -112,6 +116,7 @@ private:
 
     // UI → オーディオ
     std::atomic<bool>  pBypass_{false};
+    std::atomic<bool>  pMuted_{false};
     std::atomic<bool>  pAgcOn_{true};
     std::atomic<float> pAgcTarget_{0.12f};
     // オーディオ → UI
