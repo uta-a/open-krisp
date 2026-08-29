@@ -1,8 +1,10 @@
 #include "tui_screen.h"
 #include <algorithm>
 #include <dwmapi.h>
+#include <shellapi.h>   // ExtractIconExW（WIN32_LEAN_AND_MEAN で外れるので明示）
 
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "shell32.lib")
 
 // GetConsoleWindow のスタイルを触ってリサイズを塞ぐのに要る。
 // CMakeLists.txt にリンク指定を足さずに済ませるため、ここで指定する。
@@ -500,6 +502,26 @@ void Term::syncWindowTheme() {
     themedWindow_ = true;
 }
 
+// 窓のアイコンを差し替える。Discord のアイコンをその場で借りるために使う。
+// アイコンをこちらのリポジトリへ取り込まないのは、モジュールを複製せず
+// インストール先から読むだけ、という本ツールの方針に揃えるため。
+void Term::setWindowIcon(const std::wstring& sourceExe) {
+    if (!hwnd_ || sourceExe.empty()) return;
+    // 変数名に small は使えない（rpcndr.h が char へ define している）
+    HICON big = nullptr, sm = nullptr;
+    if (ExtractIconExW(sourceExe.c_str(), 0, &big, &sm, 1) == UINT_MAX) return;
+    if (!big && !sm) return;
+
+    if (big) {
+        SendMessageW(hwnd_, WM_SETICON, ICON_BIG, (LPARAM)big);
+        iconBig_ = big;
+    }
+    if (sm) {
+        SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, (LPARAM)sm);
+        iconSmall_ = sm;
+    }
+}
+
 void Term::enforceSize() {
     if (!entered_ || wantCols_ <= 0 || wantRows_ <= 0) return;
     int c = 0, r = 0;
@@ -660,6 +682,14 @@ void Term::leave() {
     if (titleSaved_) SetConsoleTitleW(savedTitle_);
     if (modeOutSet_) SetConsoleMode(hOut_, savedOut_);
     if (modeInSet_)  SetConsoleMode(hIn_, savedIn_);
+
+    // 窓より先にアイコンを壊さないよう、モードを戻し切ってから解放する
+    if (hwnd_) {
+        if (iconBig_)   SendMessageW(hwnd_, WM_SETICON, ICON_BIG, 0);
+        if (iconSmall_) SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, 0);
+    }
+    if (iconBig_)   { DestroyIcon(iconBig_);   iconBig_ = nullptr; }
+    if (iconSmall_) { DestroyIcon(iconSmall_); iconSmall_ = nullptr; }
 }
 
 bool Term::probeAmbiguousDoubleWidth() {

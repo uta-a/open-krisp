@@ -144,6 +144,9 @@ public:
     // タイトルバーと枠の色を、いま選ばれている配色の背景色に合わせる。
     // 配色を切り替えたあとにも呼ぶこと。Windows 11 でしか効かない。
     void syncWindowTheme();
+    // sourceExe が持つアイコンをこの窓のアイコンにする（大小とも）。
+    // ファイルは読むだけで複製しない。空パスや取得失敗なら何もしない。
+    void setWindowIcon(const std::wstring& sourceExe);
     // 要求どおりのサイズになっているか（画面側が「小さすぎ」表示に落とす判断に使う）。
     // 直近の size() の測定結果で決まる。
     bool sizeLocked() const { return sizeLocked_; }
@@ -188,6 +191,7 @@ private:
     std::wstring appliedFont_;
     bool   layered_ = false;      // 透過のために WS_EX_LAYERED を足したか
     bool   themedWindow_ = false; // タイトルバーの色を変えたか
+    HICON  iconBig_ = nullptr, iconSmall_ = nullptr;
     int    savedWinCols_ = 0, savedWinRows_ = 0;
     COORD  savedBuf_ = { 0, 0 };
     HWND   hwnd_ = nullptr;
