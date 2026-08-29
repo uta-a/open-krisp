@@ -11,6 +11,7 @@
 //   openkrisp --duration 20         Krisp フレーム長ms(10/15/20/30/32, 既定10)
 //   openkrisp --no-agc              AGC(音量自動調整)を無効化（既定は ON）
 //   openkrisp --agc-target 0.10     AGC の目標音量(0..1, 既定0.12)
+//   openkrisp --mute                ミュート状態で開始（出力に無音を流す）
 //   openkrisp --bypass              Krisp を素通し（切り分け用）
 //
 // 引数を 1 つでも付けると従来どおりのヘッドレス動作になる（スクリプトからの
@@ -43,10 +44,13 @@ int wmain(int argc, wchar_t** argv) {
 
         if (hasFlag(argc, argv, L"--list")) {
             rc = runList(eng);
+        } else if (hasFlag(argc, argv, L"--uitest") && hasFlag(argc, argv, L"--stress")) {
+            // 「デバイス一覧を開くと固まる」不具合の再現テスト。
+            rc = runScreenStress();
         } else if (hasFlag(argc, argv, L"--uitest")) {
             // 画面の桁ずれ確認用。Krisp もオーディオも起動しない。
             rc = runUiTest(eng,
-                           _wtoi(argVal(argc, argv, L"--cols", L"60")),
+                           _wtoi(argVal(argc, argv, L"--cols", L"64")),
                            _wtoi(argVal(argc, argv, L"--rows", L"18")),
                            hasFlag(argc, argv, L"--ascii"),
                            hasFlag(argc, argv, L"--picker"));

@@ -78,6 +78,11 @@ public:
     std::wstring dumpText() const;
 
 private:
+    // (x,y) を上書きする直前に呼ぶ。全角は 2 セルで 1 文字なので、片側だけを
+    // 書き換えると相方が w=2 / w=0 のまま取り残され、flush() の差分計算が壊れる。
+    // 取り残される側を半角の空白へ潰して、セルの対を常に成立させておく。
+    void breakWideAt(int x, int y);
+
     std::vector<Cell> front_, back_;
     int  cols_ = 0, rows_ = 0;
     bool full_ = true;
@@ -96,10 +101,19 @@ struct TermEvent {
 class Term {
 public:
     // モードを退避し、VT を有効化して代替画面へ移る。
+    // 代替画面へ入る前に fixedCols x fixedRows へ端末を合わせ、リサイズも塞ぐ。
     // VT を有効にできない端末では false を返す（TUI を諦める）。
-    bool enter(std::wstring* err);
-    // 退避したモードへ完全に戻す。多重呼び出し安全（Ctrl+C ハンドラからも呼ぶ）。
+    // サイズを合わせられない端末でも TUI 自体は起動する（size() は実サイズを返す）。
+    bool enter(int fixedCols, int fixedRows, std::wstring* err);
+    // 退避したモード・サイズ・ウィンドウスタイルへ完全に戻す。
+    // 多重呼び出し安全（Ctrl+C ハンドラからも呼ぶ）。
     void leave();
+    // リサイズされてしまったときに、要求サイズへ戻すよう再要求する。
+    // WINDOW_BUFFER_SIZE_EVENT を受けたら呼ぶ。既に要求どおりなら何もしない。
+    void enforceSize();
+    // 要求どおりのサイズになっているか（画面側が「小さすぎ」表示に落とす判断に使う）。
+    // 直近の size() の測定結果で決まる。
+    bool sizeLocked() const { return sizeLocked_; }
     // timeoutMs 待って入力を取り出す。false ならタイムアウト（＝再描画の合図）。
     bool poll(TermEvent* ev, DWORD timeoutMs);
     void wake();                        // poll を即座に起こす
@@ -107,6 +121,9 @@ public:
     HANDLE out() const { return hOut_; }
 
 private:
+    // 要求サイズへ寄せる。合わせられたら true。
+    bool applySize(int cols, int rows);
+
     HANDLE hIn_ = nullptr, hOut_ = nullptr, hWake_ = nullptr;
     DWORD  savedIn_ = 0, savedOut_ = 0;
     bool   modeOutSet_ = false, modeInSet_ = false;
@@ -114,4 +131,16 @@ private:
     std::atomic<bool> left_{false};
     // 1 回の ReadConsoleInputW で複数のイベントが来るので、取り出せなかった分を貯める。
     std::vector<TermEvent> queue_;
+
+    // --- サイズ固定 ---
+    int    wantCols_ = 0, wantRows_ = 0;      // 0 なら固定しない
+    // size() は const だが、測るたびに判定を更新したいので mutable にしてある。
+    mutable bool sizeLocked_ = false;
+    unsigned long long lastApply_ = 0;        // enforceSize() の暴走よけ
+    // leave() で元へ戻すために enter() で退避する
+    int    savedWinCols_ = 0, savedWinRows_ = 0;
+    COORD  savedBuf_ = { 0, 0 };
+    HWND   hwnd_ = nullptr;
+    LONG   savedStyle_ = 0;
+    bool   styleSaved_ = false;
 };
