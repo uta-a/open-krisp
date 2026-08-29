@@ -130,3 +130,12 @@ NCSetup2_t typedef と GetProcAddress("KrispNCSetup2")追加。ビルド成功�
 - CLI追加: --no-agc, --agc-target 0.12(既定), --duration(10/15/20/30/32ms), --suppression(0-100)。
   実音声でのチューニング用。合成音声(SAPI)では品質評価が不正確なため実声で調整推奨。
 - 注: エコー除去(AEC)は未実装。ヘッドセットマイクでは影響小。必要なら第2版。
+
+---
+
+## 2026-08-30 第2版 (OpenKrisp)
+
+`krisp-bridge` を **OpenKrisp** に改名し、全操作を TUI 化した。
+本ログは第1版の解析記録であり、内容はそのまま有効（署名検証 RVA `0x53110`、
+セッションマップと `engine=1` の件、抑制強度 RVA `0xDA20B0`）。
+第2版での実装上の変更は README.md と git のコミット履歴を参照。
