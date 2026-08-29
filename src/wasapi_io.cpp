@@ -3,10 +3,20 @@
 #include <avrt.h>
 #include <ksmedia.h>
 #include <algorithm>
+#include <cstdio>
 
 #pragma comment(lib, "avrt.lib")
 
 static const int kDstSr = 48000;
+
+// エラー文字列に HRESULT を添える。AUDCLNT_E_DEVICE_IN_USE(0x8889000A) や
+// AUDCLNT_E_DEVICE_INVALIDATED(0x88890004) を TUI 上で切り分けられるようにする。
+static void setErr(std::wstring* err, const wchar_t* what, HRESULT hr) {
+    if (!err) return;
+    wchar_t buf[160];
+    _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%s (hr=0x%08X)", what, (unsigned)hr);
+    *err = buf;
+}
 
 std::wstring deviceName(IMMDevice* dev) {
     IPropertyStore* ps = nullptr;
@@ -79,28 +89,39 @@ static bool formatIsFloat(WAVEFORMATEX* w) {
 bool WasapiCapture::start(IMMDevice* dev,
                           std::function<void(const float*, size_t)> onFrames,
                           std::wstring* err) {
+    stop();  // 直前の状態が残っていても安全に作り直せるようにする
     cb_ = std::move(onFrames);
-    if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&ac_))) {
-        if (err) *err = L"capture Activate 失敗"; return false;
-    }
-    if (FAILED(ac_->GetMixFormat(&mix_))) { if (err) *err = L"capture GetMixFormat 失敗"; return false; }
+    total_.store(0, std::memory_order_relaxed);
+    silent_.store(0, std::memory_order_relaxed);
+
+    HRESULT hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&ac_);
+    if (FAILED(hr)) { setErr(err, L"capture Activate 失敗", hr); stop(); return false; }
+    hr = ac_->GetMixFormat(&mix_);
+    if (FAILED(hr)) { setErr(err, L"capture GetMixFormat 失敗", hr); stop(); return false; }
     ev_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     REFERENCE_TIME dur = 2000000; // 200ms
-    HRESULT hr = ac_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+    hr = ac_->Initialize(AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK, dur, 0, mix_, nullptr);
-    if (FAILED(hr)) { if (err) *err = L"capture Initialize 失敗"; return false; }
+    if (FAILED(hr)) { setErr(err, L"capture Initialize 失敗", hr); stop(); return false; }
     ac_->SetEventHandle(ev_);
-    if (FAILED(ac_->GetService(__uuidof(IAudioCaptureClient), (void**)&cap_))) {
-        if (err) *err = L"capture GetService 失敗"; return false;
-    }
-    run_ = true;
+    hr = ac_->GetService(__uuidof(IAudioCaptureClient), (void**)&cap_);
+    if (FAILED(hr)) { setErr(err, L"capture GetService 失敗", hr); stop(); return false; }
+
+    run_.store(true, std::memory_order_release);
     ac_->Start();
     thread_ = CreateThread(nullptr, 0, threadProc, this, 0, nullptr);
+    if (!thread_) {
+        setErr(err, L"capture スレッド生成失敗", HRESULT_FROM_WIN32(GetLastError()));
+        stop(); return false;
+    }
     return true;
 }
 
 DWORD WINAPI WasapiCapture::threadProc(void* self) {
+    // WASAPI を触るスレッドは COM を初期化しておく（デバイス切替で何度も作り直すため）
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     reinterpret_cast<WasapiCapture*>(self)->loop();
+    CoUninitialize();
     return 0;
 }
 
@@ -118,15 +139,15 @@ void WasapiCapture::loop() {
     std::vector<float> monoChunk;
     std::vector<float> out48;
 
-    while (run_) {
+    while (run_.load(std::memory_order_acquire)) {
         if (WaitForSingleObject(ev_, 200) != WAIT_OBJECT_0) continue;
         UINT32 packet = 0;
         while (SUCCEEDED(cap_->GetNextPacketSize(&packet)) && packet > 0) {
             BYTE* data; UINT32 frames; DWORD flags;
             if (FAILED(cap_->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
             bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT);
-            total_ += frames;
-            if (silent) silent_ += frames;
+            total_.fetch_add(frames, std::memory_order_relaxed);
+            if (silent) silent_.fetch_add(frames, std::memory_order_relaxed);
             monoChunk.clear();
             monoChunk.reserve(frames);
             for (UINT32 i = 0; i < frames; i++) {
@@ -172,46 +193,57 @@ void WasapiCapture::loop() {
 }
 
 void WasapiCapture::stop() {
-    run_ = false;
-    if (thread_) { WaitForSingleObject(thread_, 1000); CloseHandle(thread_); thread_ = nullptr; }
+    run_.store(false, std::memory_order_release);
+    // スレッドが確実に抜けるまで待つ。ここで諦めると、解放済みの cap_/ac_ を
+    // まだ動いているスレッドが触ることになる（ev_ は 200ms タイムアウトなのですぐ返る）。
+    if (thread_) { WaitForSingleObject(thread_, INFINITE); CloseHandle(thread_); thread_ = nullptr; }
     if (ac_) ac_->Stop();
     if (cap_) { cap_->Release(); cap_ = nullptr; }
     if (ac_) { ac_->Release(); ac_ = nullptr; }
     if (mix_) { CoTaskMemFree(mix_); mix_ = nullptr; }
     if (ev_) { CloseHandle(ev_); ev_ = nullptr; }
+    cb_ = nullptr;  // 再起動時に古いコールバックを使い回さない
 }
 
 // ================= Render =================
 
 bool WasapiRender::start(IMMDevice* dev, std::function<void(float*, size_t)> pull,
                          std::wstring* err) {
+    stop();  // 直前の状態が残っていても安全に作り直せるようにする
     pull_ = std::move(pull);
-    if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&ac_))) {
-        if (err) *err = L"render Activate 失敗"; return false;
-    }
-    if (FAILED(ac_->GetMixFormat(&mix_))) { if (err) *err = L"render GetMixFormat 失敗"; return false; }
+
+    HRESULT hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&ac_);
+    if (FAILED(hr)) { setErr(err, L"render Activate 失敗", hr); stop(); return false; }
+    hr = ac_->GetMixFormat(&mix_);
+    if (FAILED(hr)) { setErr(err, L"render GetMixFormat 失敗", hr); stop(); return false; }
     ev_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     REFERENCE_TIME dur = 2000000; // 200ms
-    HRESULT hr = ac_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+    hr = ac_->Initialize(AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK, dur, 0, mix_, nullptr);
-    if (FAILED(hr)) { if (err) *err = L"render Initialize 失敗"; return false; }
+    if (FAILED(hr)) { setErr(err, L"render Initialize 失敗", hr); stop(); return false; }
     ac_->SetEventHandle(ev_);
     ac_->GetBufferSize(&bufFrames_);
-    if (FAILED(ac_->GetService(__uuidof(IAudioRenderClient), (void**)&ren_))) {
-        if (err) *err = L"render GetService 失敗"; return false;
-    }
+    hr = ac_->GetService(__uuidof(IAudioRenderClient), (void**)&ren_);
+    if (FAILED(hr)) { setErr(err, L"render GetService 失敗", hr); stop(); return false; }
+
     // 事前に無音で満たしてから開始（アンダーラン回避）
     BYTE* buf = nullptr;
     if (SUCCEEDED(ren_->GetBuffer(bufFrames_, &buf)))
         ren_->ReleaseBuffer(bufFrames_, AUDCLNT_BUFFERFLAGS_SILENT);
-    run_ = true;
+    run_.store(true, std::memory_order_release);
     ac_->Start();
     thread_ = CreateThread(nullptr, 0, threadProc, this, 0, nullptr);
+    if (!thread_) {
+        setErr(err, L"render スレッド生成失敗", HRESULT_FROM_WIN32(GetLastError()));
+        stop(); return false;
+    }
     return true;
 }
 
 DWORD WINAPI WasapiRender::threadProc(void* self) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     reinterpret_cast<WasapiRender*>(self)->loop();
+    CoUninitialize();
     return 0;
 }
 
@@ -228,7 +260,7 @@ void WasapiRender::loop() {
     float prevMono = 0.f;
     std::vector<float> src48;  // 48kの供給を貯める
 
-    while (run_) {
+    while (run_.load(std::memory_order_acquire)) {
         if (WaitForSingleObject(ev_, 200) != WAIT_OBJECT_0) continue;
         UINT32 padding = 0;
         if (FAILED(ac_->GetCurrentPadding(&padding))) continue;
@@ -281,11 +313,14 @@ void WasapiRender::loop() {
 }
 
 void WasapiRender::stop() {
-    run_ = false;
-    if (thread_) { WaitForSingleObject(thread_, 1000); CloseHandle(thread_); thread_ = nullptr; }
+    run_.store(false, std::memory_order_release);
+    // capture 側と同じ理由で無期限待ち（wasapi_io.h の冒頭コメント参照）。
+    if (thread_) { WaitForSingleObject(thread_, INFINITE); CloseHandle(thread_); thread_ = nullptr; }
     if (ac_) ac_->Stop();
     if (ren_) { ren_->Release(); ren_ = nullptr; }
     if (ac_) { ac_->Release(); ac_ = nullptr; }
     if (mix_) { CoTaskMemFree(mix_); mix_ = nullptr; }
     if (ev_) { CloseHandle(ev_); ev_ = nullptr; }
+    bufFrames_ = 0;
+    pull_ = nullptr;  // 再起動時に古いコールバックを使い回さない
 }
