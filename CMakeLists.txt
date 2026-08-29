@@ -15,6 +15,7 @@ add_executable(openkrisp
   src/cli.cpp
   src/engine.cpp
   src/settings.cpp
+  src/hotkey.cpp
   src/tui_screen.cpp
   src/tui_app.cpp
   src/krisp_shim.cpp

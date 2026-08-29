@@ -175,17 +175,35 @@ void Screen::hsep(int x, int y, int w, uint16_t attr) {
     put(x + w - 1, y, gl.mr, attr);
 }
 
+// 配色は Windows PowerShell のコンソールに合わせる。
+// 端末の既定色に任せず自前で塗るのは、conhost で開き直したときに配色が
+// 利用者の設定次第でばらつくのと、背景を塗らないと枠の外が浮いて見えるため。
+namespace {
+struct Rgb { unsigned char r, g, b; };
+const Rgb kBg     = { 0x01, 0x24, 0x56 };   // PowerShell の既定の背景
+const Rgb kFg     = { 0xEE, 0xED, 0xF0 };
+const Rgb kDim    = { 0x8A, 0x9B, 0xB8 };   // 背景が濃紺なので灰色ではなく青寄りに
+const Rgb kCyan   = { 0x61, 0xD6, 0xD6 };
+const Rgb kGreen  = { 0x16, 0xC6, 0x0C };
+const Rgb kYellow = { 0xF9, 0xF1, 0xA5 };
+const Rgb kRed    = { 0xE7, 0x48, 0x56 };
+} // namespace
+
 // 属性を SGR シーケンスへ。属性が変わるところでだけ出す。
 static void appendSgr(std::wstring& o, uint16_t a) {
-    o += L"\x1b[0";
-    if (a & ATTR_DIM)    o += L";2";
-    if (a & ATTR_BOLD)   o += L";1";
-    if (a & ATTR_REV)    o += L";7";
-    if (a & ATTR_CYAN)   o += L";36";
-    if (a & ATTR_GREEN)  o += L";32";
-    if (a & ATTR_YELLOW) o += L";33";
-    if (a & ATTR_RED)    o += L";31";
-    o += L"m";
+    Rgb fg = kFg, bg = kBg;
+    if (a & ATTR_DIM)    fg = kDim;
+    if (a & ATTR_CYAN)   fg = kCyan;
+    if (a & ATTR_GREEN)  fg = kGreen;
+    if (a & ATTR_YELLOW) fg = kYellow;
+    if (a & ATTR_RED)    fg = kRed;
+    if (a & ATTR_REV)    { Rgb t = fg; fg = bg; bg = t; }
+    wchar_t buf[72];
+    _snwprintf_s(buf, _countof(buf), _TRUNCATE,
+                 L"\x1b[0%s;38;2;%u;%u;%u;48;2;%u;%u;%um",
+                 (a & ATTR_BOLD) ? L";1" : L"",
+                 fg.r, fg.g, fg.b, bg.r, bg.g, bg.b);
+    o += buf;
 }
 
 // セルが前フレームと同一か。幅(w)まで見るのは、字と色が同じでも半角/全角の
@@ -199,7 +217,9 @@ void Screen::flush(HANDLE hOut) {
     if (cols_ <= 0 || rows_ <= 0) return;
     std::wstring o;
     o.reserve((size_t)cols_ * 8);
-    if (full_) o += L"\x1b[2J";
+    // 全面再描画のときは、先に既定色を出してから消す。ESC[2J は「そのときの
+    // 背景色」で塗るので、順序を逆にすると端末の既定色で塗られてしまう。
+    if (full_) { appendSgr(o, ATTR_NONE); o += L"\x1b[2J"; }
 
     for (int y = 0; y < rows_; y++) {
         int x = 0;
@@ -228,7 +248,6 @@ void Screen::flush(HANDLE hOut) {
                 if (c.attr != cur) { appendSgr(o, c.attr); cur = c.attr; }
                 o += c.ch;
             }
-            o += L"\x1b[0m";
             // 走査位置は必ず前進させる。s を 1 桁戻したとき、戻した先が前フレームと
             // 同じだと内側のループが即 break して e == s == x-1 になり、そのまま
             // x = e とすると同じ桁を延々と調べ直して無限ループになる。put() 側で
@@ -401,10 +420,21 @@ bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
         }
     }
 
+    // conhost で開き直すとタイトルが "conhost.exe" のままになるので付け直す。
+    // 元のタイトルは leave() で戻す。
+    if (GetConsoleTitleW(savedTitle_, (DWORD)(sizeof(savedTitle_) / sizeof(savedTitle_[0]))))
+        titleSaved_ = true;
+    SetConsoleTitleW(L"OpenKrisp");
+
     hWake_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    const wchar_t* init = L"\x1b[?1049h\x1b[?25l\x1b[2J";
+    // 代替画面へ入ったら、最初の描画が来る前に PowerShell 相当の配色で塗り潰す。
+    // 先に色を出しておかないと ESC[2J が端末の既定色で塗ってしまい、
+    // 起動直後だけ地色が違って見える。
+    std::wstring init = L"\x1b[?1049h\x1b[?25l";
+    appendSgr(init, ATTR_NONE);
+    init += L"\x1b[2J";
     DWORD wrote = 0;
-    WriteConsoleW(hOut_, init, (DWORD)wcslen(init), &wrote, nullptr);
+    WriteConsoleW(hOut_, init.c_str(), (DWORD)init.size(), &wrote, nullptr);
     entered_ = true;
     left_.store(false);
 
@@ -441,8 +471,31 @@ void Term::leave() {
         setConsoleGeometry(hOut_, savedWinCols_, savedWinRows_, buf);
     }
 
+    if (titleSaved_) SetConsoleTitleW(savedTitle_);
     if (modeOutSet_) SetConsoleMode(hOut_, savedOut_);
     if (modeInSet_)  SetConsoleMode(hIn_, savedIn_);
+}
+
+bool Term::probeAmbiguousDoubleWidth() {
+    if (!entered_) return false;
+    CONSOLE_SCREEN_BUFFER_INFO bi;
+    if (!GetConsoleScreenBufferInfo(hOut_, &bi)) return false;
+
+    // 左上へ 1 文字だけ書いてカーソルの進み方を見る。この後すぐ全面描画で
+    // 上書きされるので、画面に残る心配はない。
+    const COORD origin = { 0, 0 };
+    if (!SetConsoleCursorPosition(hOut_, origin)) return false;
+    DWORD wrote = 0;
+    if (!WriteConsoleW(hOut_, L"─", 1, &wrote, nullptr)) return false;
+    if (!GetConsoleScreenBufferInfo(hOut_, &bi)) return false;
+    const int advanced = bi.dwCursorPosition.X;
+
+    // 消してカーソルを戻す
+    SetConsoleCursorPosition(hOut_, origin);
+    WriteConsoleW(hOut_, L"  ", 2, &wrote, nullptr);
+    SetConsoleCursorPosition(hOut_, origin);
+
+    return advanced >= 2;
 }
 
 void Term::wake() {
@@ -497,6 +550,7 @@ bool Term::poll(TermEvent* ev, DWORD timeoutMs) {
             e.ch    = k.uChar.UnicodeChar;
             e.ctrl  = (k.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
             e.shift = (k.dwControlKeyState & SHIFT_PRESSED) != 0;
+            e.alt   = (k.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
         } else {
             continue;   // フォーカス・メニュー・マウスは無視
         }

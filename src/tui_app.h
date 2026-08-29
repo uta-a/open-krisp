@@ -18,7 +18,8 @@ int runTui(AudioEngine& eng);
 
 // 画面を 1 枚だけ組み立てて、装飾なしのテキストとして標準出力へ出す（--uitest）。
 // Krisp もオーディオも起動しないので、罫線の桁ずれだけを安全に確認できる。
-int runUiTest(AudioEngine& eng, int cols, int rows, bool ascii, bool picker);
+// overlay: 0=なし / 1=デバイス一覧 / 2=キー割り当て
+int runUiTest(AudioEngine& eng, int cols, int rows, bool ascii, int overlay);
 
 // 「デバイス一覧を開くと固まる」不具合の再現テスト（--uitest --stress）。
 // 全角の右半分を半角で上書きしてセルの対を壊し、次のフレームの flush() が

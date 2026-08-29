@@ -2,6 +2,7 @@
 #include "tui_screen.h"
 #include "engine.h"
 #include "settings.h"
+#include "hotkey.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstdarg>
@@ -16,20 +17,38 @@
 // 起動時に端末をこの大きさへ合わせ、リサイズできないようにする。
 // レイアウトはこのサイズで過不足なく埋まるように組んである。
 const int kFixedCols = 64;
-const int kFixedRows = 18;
+const int kFixedRows = 20;
 
 namespace {
 
 // 固定に失敗した端末でも、これ以上あれば崩れずに描ける下限。
 const int kMinCols = 56;
-const int kMinRows = 18;
+const int kMinRows = 20;
 
-const int kBoxRows  = 15;   // 枠の高さ（この下にキー説明 2 行 + 通知 1 行）
-const int kLabelW   = 14;   // 設定行のラベル欄の幅
+const int kBoxRows  = 17;   // 枠の高さ（この下にキー説明 2 行 + 通知 1 行）
+// ラベル欄の幅。最長の「全体ホットキー」(全角7文字=14桁) が値とくっつかないよう
+// 2 桁ぶん余裕を持たせる。
+const int kLabelW   = 16;
 const int kMaxBar   = 30;   // メーターの最大桁数
 
 // 操作できる行。モデル行は表示のみなのでここには入れない。
-enum Row { R_IN = 0, R_OUT, R_MUTE, R_NC, R_AGC, R_DUR, R_COUNT };
+enum Row { R_IN = 0, R_OUT, R_MUTE, R_NC, R_AGC, R_DUR, R_MUTEKEY, R_GLOBALKEY, R_COUNT };
+
+// TUI 内のキー割り当てで奪ってはいけないキー。奪うと画面から出られなくなる。
+bool reservedForUi(int vk) {
+    return vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT ||
+           vk == VK_RETURN || vk == VK_ESCAPE || vk == VK_TAB;
+}
+
+// いま押されている修飾キーを KeyBinding の mods へ。
+// Win キーはコンソールの入力レコードに乗らないので取れない。
+unsigned int modsOf(const TermEvent& ev) {
+    unsigned int m = 0;
+    if (ev.ctrl)  m |= MOD_CONTROL;
+    if (ev.alt)   m |= MOD_ALT;
+    if (ev.shift) m |= MOD_SHIFT;
+    return m;
+}
 
 // Ctrl+C / ウィンドウを閉じる操作でも端末を必ず元へ戻すため、ハンドラから触る。
 Term* g_term = nullptr;
@@ -104,17 +123,21 @@ class App {
 public:
     App(AudioEngine& eng) : eng_(eng) {}
     int run();
-    int uiTest(int cols, int rows, bool ascii, bool picker);
+    int uiTest(int cols, int rows, bool ascii, int overlay);
 
 private:
     void render();
     void renderMain(int cols, int rows);
     void renderPicker(int cols, int rows);
+    void renderCapture(int cols, int rows);
     void onKey(const TermEvent& ev);
     void onKeyMain(const TermEvent& ev);
     void onKeyPicker(const TermEvent& ev);
+    void onKeyCapture(const TermEvent& ev);
     void openPicker(bool input);
     void applyPicked();
+    void beginCapture(bool global);
+    void applyGlobalHotkey();
     void toggleMute();
     void toast(const std::wstring& s, uint16_t attr = ATTR_NONE);
     void restartWith(const std::wstring& what, const std::function<bool(std::wstring*)>& op);
@@ -130,6 +153,16 @@ private:
     std::vector<DeviceInfo> pickList_;
     int  pickSel_ = 0;
     int  pickTop_ = 0;
+
+    // キー割り当ての取得中。次に押されたキーをそのまま割り当てる。
+    bool capturing_ = false;
+    bool captureGlobal_ = false;
+    std::wstring captureErr_;
+
+    GlobalHotkey ghk_;
+    // ホットキーは専用スレッドから飛んでくるので、フラグを立てるだけにして
+    // 実際の切り替えは UI スレッドで行う。
+    std::atomic<bool> ghkFired_{ false };
 
     EngineStats stats_;
     unsigned long long startedAt_ = 0;
@@ -193,7 +226,8 @@ void App::render() {
     }
 
     renderMain(cols, rows);
-    if (picking_) renderPicker(cols, rows);
+    if (picking_)   renderPicker(cols, rows);
+    if (capturing_) renderCapture(cols, rows);
     if (!dump_) scr_.flush(term_.out());
 }
 
@@ -237,8 +271,9 @@ void App::renderMain(int cols, int rows) {
 
     // 設定行
     EngineConfig c = eng_.config();
-    const int yIn = 1, yOut = 2, yMute = 7, yNc = 8, yAgc = 9, yDur = 10, yModel = 11;
-    const int selY[R_COUNT] = { yIn, yOut, yMute, yNc, yAgc, yDur };
+    const int yIn = 1, yOut = 2, yMute = 7, yNc = 8, yAgc = 9, yDur = 10,
+              yMuteKey = 11, yGlobalKey = 12, yModel = 13;
+    const int selY[R_COUNT] = { yIn, yOut, yMute, yNc, yAgc, yDur, yMuteKey, yGlobalKey };
     for (int r = 0; r < R_COUNT; r++)
         scr_.put(curX, selY[r], (sel_ == r) ? gl.cursor : L" ",
                  (sel_ == r) ? (ATTR_BOLD | ATTR_CYAN) : ATTR_NONE);
@@ -250,7 +285,9 @@ void App::renderMain(int cols, int rows) {
     // ミュート
     label(yMute, L"ミュート", R_MUTE);
     scr_.put(valueX, yMute, muted ? L"ON " : L"OFF", muted ? (ATTR_BOLD | ATTR_RED) : ATTR_DIM);
-    scr_.put(valueX + 7, yMute, muted ? L"マイクを止めています" : L"M でいつでも切替",
+    scr_.put(valueX + 7, yMute,
+             muted ? std::wstring(L"マイクを止めています")
+                   : formatKeyBinding(st_.muteKey) + L" で切替",
              muted ? ATTR_RED : ATTR_DIM);
     // ノイズ抑制
     label(yNc, L"ノイズ抑制", R_NC);
@@ -268,6 +305,19 @@ void App::renderMain(int cols, int rows) {
     // フレーム長
     label(yDur, L"フレーム長", R_DUR);
     scr_.put(valueX, yDur, fmt(L"%d ms", c.durationMs));
+    // ミュートのキー割り当て
+    label(yMuteKey, L"ミュートキー", R_MUTEKEY);
+    scr_.put(valueX, yMuteKey, formatKeyBinding(st_.muteKey), ATTR_CYAN);
+    label(yGlobalKey, L"全体ホットキー", R_GLOBALKEY);
+    {
+        const bool on = ghk_.active();
+        scr_.put(valueX, yGlobalKey, formatKeyBinding(st_.globalMuteKey),
+                 on ? ATTR_CYAN : ATTR_DIM);
+        if (st_.globalMuteKey.assigned() && !on)
+            scr_.put(valueX + 16, yGlobalKey, L"登録できず", ATTR_RED);
+        else if (!st_.globalMuteKey.assigned())
+            scr_.put(valueX + 16, yGlobalKey, L"他アプリ中でも効く", ATTR_DIM);
+    }
     // モデル（切替は未対応なので淡色）
     scr_.put(labelX, yModel, padTo(L"モデル", kLabelW), ATTR_DIM);
     scr_.put(valueX, yModel, L"full_NC", ATTR_DIM);
@@ -279,8 +329,9 @@ void App::renderMain(int cols, int rows) {
 
     // 枠の下: キー説明 2 行と通知 1 行
     const int f1 = rows - 3, f2 = rows - 2, sy = rows - 1;
-    scr_.put(1, f1, truncWidth(fmt(L"%s%s 選択   %s%s 値   Enter 切替/決定   M ミュート",
-                                   gl.up, gl.down, gl.left, gl.right),
+    scr_.put(1, f1, truncWidth(fmt(L"%s%s 選択   %s%s 値   Enter 切替/決定   %s ミュート",
+                                   gl.up, gl.down, gl.left, gl.right,
+                                   formatKeyBinding(st_.muteKey).c_str()),
                                cols - 2, gl.ellipsis), ATTR_DIM);
     scr_.put(1, f2, truncWidth(L"S 保存   R デバイス再検索   A 字形   Q 終了",
                                cols - 2, gl.ellipsis), ATTR_DIM);
@@ -328,7 +379,79 @@ void App::renderPicker(int cols, int rows) {
     scr_.put(x + 1, y + h - 1, fmt(L" %s%s Enter 決定  Esc 戻る ", gl.up, gl.down), ATTR_DIM);
 }
 
+void App::renderCapture(int cols, int rows) {
+    const Glyphs& gl = scr_.g();
+    const int w = (std::min)(cols - 8, 52);
+    const int h = captureErr_.empty() ? 4 : 5;   // 上枠 + 説明2行(+エラー) + 下枠
+    const int x = (cols - w) / 2;
+    const int y = (std::max)(1, (rows - h) / 2);
+
+    for (int i = 0; i < h; i++) scr_.fill(x, y + i, w, L" ");
+    scr_.box(x, y, w, h, ATTR_CYAN);
+    scr_.put(x + 2, y, captureGlobal_ ? L" 全体ホットキーを割り当て "
+                                      : L" ミュートキーを割り当て ",
+             ATTR_BOLD | ATTR_CYAN);
+
+    int ln = y + 1;
+    scr_.put(x + 2, ln++, L"割り当てたいキーを押してください", ATTR_BOLD);
+    scr_.put(x + 2, ln++,
+             captureGlobal_ ? L"Ctrl / Alt / Shift と組み合わせてください"
+                            : L"矢印・Enter・Esc は使えません",
+             ATTR_DIM);
+    if (!captureErr_.empty())
+        scr_.put(x + 2, ln++, truncWidth(captureErr_, w - 4, gl.ellipsis), ATTR_RED);
+    scr_.put(x + 2, y + h - 1, L" Esc 中止   Delete 解除 ", ATTR_DIM);
+}
+
 // --- 操作 -----------------------------------------------------------------
+void App::beginCapture(bool global) {
+    capturing_ = true;
+    captureGlobal_ = global;
+    captureErr_.clear();
+}
+
+// 設定を実際のホットキー登録へ反映する。失敗してもアプリは動き続ける。
+void App::applyGlobalHotkey() {
+    std::wstring err;
+    if (ghk_.set(st_.globalMuteKey,
+                 [this] { ghkFired_.store(true); term_.wake(); }, &err))
+        return;
+    toast(L"全体ホットキーを登録できません: " + err, ATTR_RED);
+}
+
+void App::onKeyCapture(const TermEvent& ev) {
+    if (ev.vk == VK_ESCAPE) { capturing_ = false; captureErr_.clear(); return; }
+
+    KeyBinding k;
+    if (ev.vk == VK_DELETE || ev.vk == VK_BACK) {
+        k = KeyBinding{};                       // 未割り当てにする
+    } else {
+        k.vk   = (unsigned int)ev.vk;
+        k.mods = modsOf(ev);
+    }
+
+    if (captureGlobal_) {
+        std::wstring why;
+        if (!isValidGlobalHotkey(k, &why)) { captureErr_ = why; return; }
+        st_.globalMuteKey = k;
+        capturing_ = false;
+        captureErr_.clear();
+        applyGlobalHotkey();
+        if (ghk_.active() || !k.assigned())
+            toast(L"全体ホットキー: " + formatKeyBinding(k) + L"（S で保存）", ATTR_GREEN);
+        return;
+    }
+
+    if (k.assigned() && reservedForUi((int)k.vk)) {
+        captureErr_ = L"そのキーは画面の操作に使うので割り当てられません";
+        return;
+    }
+    st_.muteKey = k;
+    capturing_ = false;
+    captureErr_.clear();
+    toast(L"ミュートキー: " + formatKeyBinding(k) + L"（S で保存）", ATTR_GREEN);
+}
+
 void App::openPicker(bool input) {
     pickInput_ = input;
     pickList_ = eng_.devices(input ? eCapture : eRender);
@@ -368,6 +491,14 @@ void App::onKeyMain(const TermEvent& ev) {
     EngineConfig c = eng_.config();
     const int dir = (ev.vk == VK_RIGHT) ? 1 : -1;
 
+    // 割り当てられたミュートキーを最優先で見る。修飾なしの割り当てなら
+    // Shift の有無は問わない（大文字で打っても効くようにするため）。
+    if (st_.muteKey.assigned() && (unsigned int)ev.vk == st_.muteKey.vk &&
+        (st_.muteKey.mods == 0 || modsOf(ev) == st_.muteKey.mods)) {
+        toggleMute();
+        return;
+    }
+
     switch (ev.vk) {
     case VK_UP:   sel_ = (sel_ + R_COUNT - 1) % R_COUNT; return;
     case VK_DOWN: sel_ = (sel_ + 1) % R_COUNT;           return;
@@ -394,6 +525,10 @@ void App::onKeyMain(const TermEvent& ev) {
                 return eng_.setDuration(cycleDuration(c.durationMs, dir), e);
             });
             break;
+        case R_MUTEKEY:
+        case R_GLOBALKEY:
+            toast(L"Enter でキーの割り当てを始めます");
+            break;
         }
         return;
     }
@@ -410,12 +545,13 @@ void App::onKeyMain(const TermEvent& ev) {
         case R_DUR:  restartWith(L"フレーム長を変更", [&](std::wstring* e) {
                          return eng_.setDuration(cycleDuration(c.durationMs, 1), e);
                      }); break;
+        case R_MUTEKEY:   beginCapture(false); break;
+        case R_GLOBALKEY: beginCapture(true);  break;
         }
         return;
     }
 
     switch (towupper(ev.ch)) {
-    case L'M': toggleMute(); break;
     case L'Q': g_quit.store(true); break;
     case L'S': {
         st_.cfg = eng_.config();
@@ -431,6 +567,7 @@ void App::onKeyMain(const TermEvent& ev) {
         break;
     case L'A':
         st_.ascii = !st_.ascii;
+        st_.asciiSet = true;          // 自動判定より利用者の指定を優先する
         scr_.setAscii(st_.ascii);
         scr_.invalidate();
         toast(st_.ascii ? L"字形: ASCII（S で保存）" : L"字形: 罫線（S で保存）");
@@ -441,8 +578,9 @@ void App::onKeyMain(const TermEvent& ev) {
 
 void App::onKey(const TermEvent& ev) {
     if (ev.ctrl && towupper(ev.ch) == L'C') { g_quit.store(true); return; }
-    if (picking_) onKeyPicker(ev);
-    else          onKeyMain(ev);
+    if (capturing_)   onKeyCapture(ev);
+    else if (picking_) onKeyPicker(ev);
+    else               onKeyMain(ev);
 }
 
 // --- メインループ ---------------------------------------------------------
@@ -469,8 +607,15 @@ int App::run() {
         return 6;
     }
     g_term = &term_;
-    scr_.setAscii(st_.ascii);
     SetConsoleCtrlHandler(ctrlHandler, TRUE);
+
+    // ini に ui.ascii の指定が無ければ、罫線が全角幅で描かれる端末かを実測して決める。
+    // conhost + 日本語フォントだと全角になり、罫線版のままでは枠がずれるため。
+    if (!st_.asciiSet) st_.ascii = term_.probeAmbiguousDoubleWidth();
+    scr_.setAscii(st_.ascii);
+
+    applyGlobalHotkey();
+
     if (!startErr.empty()) toast(startErr, ATTR_RED);
     else if (!term_.sizeLocked())
         toast(L"端末サイズを固定できませんでした（表示が崩れる場合は手動で広げてください）",
@@ -491,6 +636,8 @@ int App::run() {
             }
             lastDraw = 0;   // 操作直後は即座に描き直す
         }
+        // ホットキーは別スレッドから飛んでくるので、ここで拾って切り替える
+        if (ghkFired_.exchange(false)) { toggleMute(); lastDraw = 0; }
         // Ctrl+C ハンドラが端末を戻した後に描画すると画面が汚れるので、ここで抜ける
         if (g_quit.load()) break;
         unsigned long long now = GetTickCount64();
@@ -513,6 +660,7 @@ int App::run() {
         render();
     }
 
+    ghk_.clear();
     term_.leave();
     g_term = nullptr;
     eng_.stop();
@@ -520,9 +668,10 @@ int App::run() {
 }
 
 // 端末に触らず、実運用に近いダミー値で 1 枚だけ組み立てて吐き出す。
-int App::uiTest(int cols, int rows, bool ascii, bool picker) {
+int App::uiTest(int cols, int rows, bool ascii, int overlay) {
     dump_ = true; dumpCols_ = cols; dumpRows_ = rows;
     scr_.setAscii(ascii);
+    parseKeyBinding(L"Ctrl+Shift+M", &st_.globalMuteKey);
 
     stats_.running = true;
     stats_.inName  = L"マイク (2- fifine Microphone)";
@@ -534,7 +683,7 @@ int App::uiTest(int cols, int rows, bool ascii, bool picker) {
     startedAt_ = GetTickCount64() - 754000;   // 00:12:34
     sel_ = R_MUTE;
 
-    if (picker) {
+    if (overlay == 1) {
         pickInput_ = true;
         pickList_ = { {L"マイク (2- fifine Microphone)"},
                       {L"CABLE Output (VB-Audio Virtual Cable)"},
@@ -542,6 +691,10 @@ int App::uiTest(int cols, int rows, bool ascii, bool picker) {
                       {L"ステレオ ミキサー (Realtek(R) Audio)"} };
         pickSel_ = 1;
         picking_ = true;
+    } else if (overlay == 2) {
+        capturing_ = true;
+        captureGlobal_ = true;
+        captureErr_ = L"修飾キー（Ctrl / Alt / Shift）を1つ以上組み合わせてください";
     }
 
     render();
@@ -562,9 +715,9 @@ int runTui(AudioEngine& eng) {
     return app.run();
 }
 
-int runUiTest(AudioEngine& eng, int cols, int rows, bool ascii, bool picker) {
+int runUiTest(AudioEngine& eng, int cols, int rows, bool ascii, int overlay) {
     App app(eng);
-    return app.uiTest(cols, rows, ascii, picker);
+    return app.uiTest(cols, rows, ascii, overlay);
 }
 
 int runScreenStress() {
@@ -590,5 +743,50 @@ int runScreenStress() {
     }
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     fputs("screen stress: ok\n", stdout);
-    return 0;
+
+    int bad = 0;
+    // キー表記の往復。設定ファイルに書いて読み戻せないと、次の起動で割り当てが
+    // 黙って既定へ戻ってしまう。
+    const wchar_t* cases[] = {
+        L"M", L"Ctrl+Shift+M", L"Alt+F1", L"Win+Space", L"F13", L"F24",
+        L"Num5", L"NumAdd", L"PageDown", L"Ctrl+Alt+Shift+Win+A", L"なし",
+    };
+    for (const wchar_t* c : cases) {
+        KeyBinding a, b;
+        if (!parseKeyBinding(c, &a)) { errw(fmt(L"keybind parse 失敗: %s\n", c)); bad++; continue; }
+        const std::wstring text = formatKeyBinding(a);
+        if (!parseKeyBinding(text, &b) || !(a == b)) {
+            errw(fmt(L"keybind 往復失敗: %s -> %s\n", c, text.c_str()));
+            bad++;
+        }
+    }
+    // 修飾キーなしの英数字を全域で奪うと他アプリで文字が打てなくなるので弾く。
+    // F13 以降は通常どのアプリも使わないので例外として通す。
+    struct { const wchar_t* k; bool ok; } valid[] = {
+        { L"M", false }, { L"Ctrl+M", true }, { L"F1", false },
+        { L"F13", true }, { L"なし", true },
+    };
+    for (auto& v : valid) {
+        KeyBinding k; std::wstring why;
+        parseKeyBinding(v.k, &k);
+        if (isValidGlobalHotkey(k, &why) != v.ok) {
+            errw(fmt(L"global 判定が期待と違う: %s\n", v.k));
+            bad++;
+        }
+    }
+    fputs(bad ? "keybind: NG\n" : "keybind: ok\n", stdout);
+
+    // 実際に登録できるか（専用スレッドとメッセージループが動くか）を確かめる。
+    // Ctrl+Alt+F24 は通常どのアプリも使っていない。
+    {
+        KeyBinding k; std::wstring err;
+        parseKeyBinding(L"Ctrl+Alt+F24", &k);
+        GlobalHotkey hk;
+        if (!hk.set(k, [] {}, &err)) errw(L"hotkey 登録失敗: " + err + L"\n");
+        const bool on = hk.active();
+        hk.clear();
+        fputs(on && !hk.active() ? "hotkey: ok\n" : "hotkey: NG\n", stdout);
+        if (!on) bad++;
+    }
+    return bad ? 1 : 0;
 }

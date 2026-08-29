@@ -5,6 +5,7 @@
 // という第1版の性質を壊さないため。
 #pragma once
 #include "engine.h"
+#include "hotkey.h"
 #include <string>
 
 struct Settings {
@@ -12,6 +13,14 @@ struct Settings {
     // 罫線とメーターを ASCII にする。conhost + 日本語フォントだと罫線が
     // 全角幅で描かれて枠がずれることがあるため、その逃げ道。
     bool ascii = false;
+    // ini に ascii の行があったか。無ければ端末を実測して自動で決めるので、
+    // 「利用者が明示的に選んだ」のか「単に書かれていない」のかを区別する。
+    bool asciiSet = false;
+
+    // TUI の中でミュートを切り替えるキー（修飾なしの 1 打を想定）
+    KeyBinding muteKey{ 0, 'M' };
+    // どのアプリを使っていても効くキー。既定は未割り当て（何も奪わない）。
+    KeyBinding globalMuteKey;
 };
 
 // exe と同じフォルダの openkrisp.ini のフルパス。

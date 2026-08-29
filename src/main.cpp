@@ -23,11 +23,70 @@
 #include "tui_app.h"
 #include <windows.h>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "user32.lib")
+
+// 開き直したことを子プロセスへ伝える環境変数。コマンドライン引数で渡すと
+// 「引数があればヘッドレス」の判定に引っかかるため、環境変数を使う。
+static const wchar_t* kRelaunchFlag = L"OPENKRISP_CONHOST_CHILD";
+
+// 本物の conhost のウィンドウにぶら下がっているか。
+// Windows Terminal や VS Code のターミナル配下では ConPTY の擬似ウィンドウ
+// （クラス名が違う）が返り、ウィンドウのスタイルを触っても効かない。
+static bool inRealConhost() {
+    HWND h = GetConsoleWindow();
+    if (!h) return false;
+    wchar_t cls[64] = {};
+    if (!GetClassNameW(h, cls, (int)(sizeof(cls) / sizeof(cls[0])))) return false;
+    return wcscmp(cls, L"ConsoleWindowClass") == 0;
+}
+
+// conhost.exe の子として自分を開き直す。成功したら true（呼び出し元は即終了する）。
+// ウィンドウサイズを固定するには本物のコンソールウィンドウが要るため。
+static bool relaunchInConhost() {
+    wchar_t self[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return false;
+
+    wchar_t sysdir[MAX_PATH];
+    if (!GetSystemDirectoryW(sysdir, MAX_PATH)) return false;
+    std::wstring conhost = std::wstring(sysdir) + L"\\conhost.exe";
+
+    // conhost.exe に「起動してほしいコマンドライン」をそのまま渡す
+    std::wstring cmd = L"\"" + conhost + L"\" \"" + std::wstring(self) + L"\"";
+
+    if (!SetEnvironmentVariableW(kRelaunchFlag, L"1")) return false;
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+    BOOL ok = CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                             CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi);
+    SetEnvironmentVariableW(kRelaunchFlag, nullptr);
+    if (!ok) return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
 
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
+
+    // TUI を開くときだけ、必要なら本物のコンソールウィンドウで開き直す。
+    // ヘッドレス起動は呼び出し元の端末で動かしたいので対象外。
+    if (argc == 1 && !inRealConhost() &&
+        GetEnvironmentVariableW(kRelaunchFlag, nullptr, 0) == 0) {
+        if (relaunchInConhost()) {
+            fputs("ウィンドウサイズを固定するため、別ウィンドウで開き直しました。\n", stdout);
+            return 0;
+        }
+        // 開き直せなくてもこの端末で続行する（サイズは固定できない）
+    }
+
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     int rc = 0;
@@ -51,9 +110,10 @@ int wmain(int argc, wchar_t** argv) {
             // 画面の桁ずれ確認用。Krisp もオーディオも起動しない。
             rc = runUiTest(eng,
                            _wtoi(argVal(argc, argv, L"--cols", L"64")),
-                           _wtoi(argVal(argc, argv, L"--rows", L"18")),
+                           _wtoi(argVal(argc, argv, L"--rows", L"20")),
                            hasFlag(argc, argv, L"--ascii"),
-                           hasFlag(argc, argv, L"--picker"));
+                           hasFlag(argc, argv, L"--picker")  ? 1 :
+                           hasFlag(argc, argv, L"--capture") ? 2 : 0);
         } else if (argc > 1) {
             rc = runCli(argc, argv, eng);
         } else {

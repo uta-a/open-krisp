@@ -96,6 +96,9 @@ struct TermEvent {
     wchar_t ch    = 0;      // 印字可能文字（vk と併用）
     bool    ctrl  = false;
     bool    shift = false;
+    bool    alt   = false;
+    // Win キーはコンソールの入力レコードに乗らない（シェルが横取りする）ため
+    // 取得できない。設定ファイルに手で書けば解釈はされる。
 };
 
 class Term {
@@ -114,6 +117,10 @@ public:
     // 要求どおりのサイズになっているか（画面側が「小さすぎ」表示に落とす判断に使う）。
     // 直近の size() の測定結果で決まる。
     bool sizeLocked() const { return sizeLocked_; }
+    // 罫線(U+2500)が全角幅で描かれる端末か、実際に 1 文字書いてカーソルの
+    // 進み具合で測る。East Asian Ambiguous はフォント任せで決め打ちできないため。
+    // 代替画面へ入った後、最初の描画より前に呼ぶこと。
+    bool probeAmbiguousDoubleWidth();
     // timeoutMs 待って入力を取り出す。false ならタイムアウト（＝再描画の合図）。
     bool poll(TermEvent* ev, DWORD timeoutMs);
     void wake();                        // poll を即座に起こす
@@ -127,6 +134,8 @@ private:
     HANDLE hIn_ = nullptr, hOut_ = nullptr, hWake_ = nullptr;
     DWORD  savedIn_ = 0, savedOut_ = 0;
     bool   modeOutSet_ = false, modeInSet_ = false;
+    wchar_t savedTitle_[256] = {};
+    bool   titleSaved_ = false;
     bool   entered_ = false;
     std::atomic<bool> left_{false};
     // 1 回の ReadConsoleInputW で複数のイベントが来るので、取り出せなかった分を貯める。

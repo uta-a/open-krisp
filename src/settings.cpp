@@ -96,6 +96,17 @@ bool loadSettings(Settings* out) {
     boolean(L"audio.agc",        s.cfg.agcEnabled);
     num(L"audio.agc_target",     s.cfg.agcTarget);
     boolean(L"ui.ascii",         s.ascii);
+    s.asciiSet = (kv.find(L"ui.ascii") != kv.end());
+
+    // キー割り当ては解釈できたときだけ差し替える（壊れた行で既定を失わない）
+    {
+        std::wstring t;
+        str(L"hotkey.mute", t);
+        if (!t.empty()) parseKeyBinding(t, &s.muteKey);
+        t.clear();
+        str(L"hotkey.global_mute", t);
+        if (!t.empty()) parseKeyBinding(t, &s.globalMuteKey);
+    }
 
     // 壊れた値で起動しないよう、ここで正気の範囲へ丸める。
     if (!validDuration(s.cfg.durationMs)) s.cfg.durationMs = 10;
@@ -148,8 +159,15 @@ bool saveSettings(const Settings& s, std::wstring* err) {
         s.cfg.durationMs, s.cfg.suppression, s.cfg.bypass ? 1 : 0, s.cfg.muted ? 1 : 0,
         s.cfg.agcEnabled ? 1 : 0, s.cfg.agcTarget);
     t += buf;
+    t += L"\n[hotkey]\n";
+    t += L"; mute        = TUI の中でミュートを切り替えるキー\n";
+    t += L"; global_mute = 他のアプリを使っていても効くキー（なし で無効）\n";
+    t += L"; 例: M / Ctrl+Shift+M / Alt+F1 / F13\n";
+    t += L"mute=" + formatKeyBinding(s.muteKey) + L"\n";
+    t += L"global_mute=" + formatKeyBinding(s.globalMuteKey) + L"\n";
     t += L"\n[ui]\n";
     t += L"; ascii=1 で罫線とメーターを ASCII にする（枠がずれる端末向け）\n";
+    t += L"; この行を消すと、起動時に端末を実測して自動で決める\n";
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"ascii=%d\n", s.ascii ? 1 : 0);
     t += buf;
 
