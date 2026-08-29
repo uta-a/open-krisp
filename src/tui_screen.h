@@ -175,6 +175,7 @@ private:
     HANDLE hIn_ = nullptr, hOut_ = nullptr, hWake_ = nullptr;
     DWORD  savedIn_ = 0, savedOut_ = 0;
     bool   modeOutSet_ = false, modeInSet_ = false;
+    bool   ownHandles_ = false;   // hOut_/hIn_ を自分で開いたか（leave で閉じる）
     wchar_t savedTitle_[256] = {};
     bool   titleSaved_ = false;
     bool   entered_ = false;

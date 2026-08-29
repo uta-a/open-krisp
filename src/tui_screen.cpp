@@ -541,12 +541,23 @@ bool Term::enter(int fixedCols, int fixedRows, bool ownWindow,
     // 呼び出し側が「自分で開いた」と言っていなくても、このコンソールに
     // 自分しか繋がっていなければ実質こちらの窓（ダブルクリック起動など）。
     ownWindow_ = ownWindow || soleConsoleClient();
-    hOut_ = GetStdHandle(STD_OUTPUT_HANDLE);
-    hIn_  = GetStdHandle(STD_INPUT_HANDLE);
+    // 標準ハンドルではなく CONOUT$ / CONIN$ を直接開く。
+    // Krisp のモジュールがログを吐かないよう標準出力を NUL へ差し替えるので、
+    // GetStdHandle 経由だと画面ではなく NUL を掴んでしまう。
+    hOut_ = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                        OPEN_EXISTING, 0, nullptr);
+    hIn_  = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                        OPEN_EXISTING, 0, nullptr);
     if (hOut_ == INVALID_HANDLE_VALUE || hIn_ == INVALID_HANDLE_VALUE) {
-        if (err) *err = L"コンソールのハンドルを取得できません。";
+        if (hOut_ != INVALID_HANDLE_VALUE) CloseHandle(hOut_);
+        if (hIn_  != INVALID_HANDLE_VALUE) CloseHandle(hIn_);
+        hOut_ = hIn_ = nullptr;
+        if (err) *err = L"コンソールに接続されていません（リダイレクト中？）。";
         return false;
     }
+    ownHandles_ = true;
     if (!GetConsoleMode(hOut_, &savedOut_) || !GetConsoleMode(hIn_, &savedIn_)) {
         if (err) *err = L"コンソールに接続されていません（リダイレクト中？）。";
         return false;
@@ -691,6 +702,13 @@ void Term::leave() {
     }
     if (iconBig_)   { DestroyIcon(iconBig_);   iconBig_ = nullptr; }
     if (iconSmall_) { DestroyIcon(iconSmall_); iconSmall_ = nullptr; }
+
+    if (ownHandles_) {
+        if (hOut_) CloseHandle(hOut_);
+        if (hIn_)  CloseHandle(hIn_);
+        hOut_ = hIn_ = nullptr;
+        ownHandles_ = false;
+    }
 }
 
 bool Term::probeAmbiguousDoubleWidth() {

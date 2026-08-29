@@ -83,6 +83,23 @@ void errw(const std::wstring& s) {
     fputs(u8.data(), stderr);
 }
 
+// Krisp のモジュールは spdlog で標準出力へログを吐く（"KrispNCSetup: ..." など）。
+// TUI は代替画面を直接描いているので、デバイス切替やフレーム長の変更で
+// ncReset/ncSetup が走るたびにログが割り込んで画面が崩れる。
+//
+// ロガーはモジュールのロード時に標準出力ハンドルを掴むので、潰すのは
+// LoadLibrary より前でなければ間に合わない。画面は CONOUT$ を直接開いて
+// 描いているので、標準出力を NUL にしても TUI の描画には影響しない。
+void silenceStdout() {
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_EXISTING, 0, nullptr);
+    if (nul != INVALID_HANDLE_VALUE) SetStdHandle(STD_OUTPUT_HANDLE, nul);
+    // 自分の CRT 側の stdout も塞ぐ（うっかりの printf で画面を汚さないため）
+    FILE* f = nullptr;
+    freopen_s(&f, "NUL", "w", stdout);
+}
+
 std::wstring padTo(const std::wstring& s, int w) {
     std::wstring t = truncWidth(s, w, L"");
     int pad = w - strWidth(t);
@@ -589,6 +606,9 @@ void App::onKey(const TermEvent& ev) {
 
 // --- メインループ ---------------------------------------------------------
 int App::run() {
+    // モジュールのログで画面が崩れないよう、ロードより先に標準出力を塞ぐ
+    silenceStdout();
+
     std::wstring err;
     if (!eng_.initKrisp(&err)) {
         errw(L"[エラー] " + err + L"\n");
