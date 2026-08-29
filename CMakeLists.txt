@@ -12,6 +12,8 @@ add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_executable(openkrisp
   src/main.cpp
+  src/cli.cpp
+  src/engine.cpp
   src/krisp_shim.cpp
   src/wasapi_io.cpp
 )
