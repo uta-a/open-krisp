@@ -19,6 +19,7 @@
 // 法的注意: 本ツールは Krisp の署名検証を回避する。個人利用限定・再配布禁止。
 #include "engine.h"
 #include "cli.h"
+#include "tui_app.h"
 #include <windows.h>
 #include <cstdio>
 
@@ -28,17 +29,34 @@ int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
-    AudioEngine eng;
-    std::wstring err;
-    if (!eng.initDevices(&err)) {
-        fputs("[error] audio device enumeration failed\n", stderr);
-        return 2;
-    }
+    int rc = 0;
+    // engine は CoUninitialize より先に壊す必要がある（IMMDevice を持っているため）。
+    // そのためにスコープで囲む。
+    {
+        AudioEngine eng;
+        std::wstring err;
+        if (!eng.initDevices(&err)) {
+            fputs("[error] audio device enumeration failed\n", stderr);
+            CoUninitialize();
+            return 2;
+        }
 
-    // TODO(TUI): 引数なしのときは runTui() へ分岐させる（次のコミットで差し替え）
-    int rc;
-    if (hasFlag(argc, argv, L"--list")) rc = runList(eng);
-    else                                rc = runCli(argc, argv, eng);
+        if (hasFlag(argc, argv, L"--list")) {
+            rc = runList(eng);
+        } else if (hasFlag(argc, argv, L"--uitest")) {
+            // 画面の桁ずれ確認用。Krisp もオーディオも起動しない。
+            rc = runUiTest(eng,
+                           _wtoi(argVal(argc, argv, L"--cols", L"60")),
+                           _wtoi(argVal(argc, argv, L"--rows", L"18")),
+                           hasFlag(argc, argv, L"--ascii"),
+                           hasFlag(argc, argv, L"--picker"));
+        } else if (argc > 1) {
+            rc = runCli(argc, argv, eng);
+        } else {
+            rc = runTui(eng);
+        }
+        fflush(stdout);
+    }
 
     CoUninitialize();
     return rc;
