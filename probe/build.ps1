@@ -1,4 +1,4 @@
-param([string]$src, [string]$exe, [string[]]$runArgs)
+﻿param([string]$src, [string]$exe, [string[]]$runArgs)
 $vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
   if ($_ -match '^([^=]+)=(.*)$') { Set-Item -Path "Env:$($matches[1])" -Value $matches[2] }

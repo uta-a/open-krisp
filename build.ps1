@@ -1,4 +1,4 @@
-# OpenKrisp のビルド。VS の x64 環境を読み込んでから CMake を回す。
+﻿# OpenKrisp のビルド。VS の x64 環境を読み込んでから CMake を回す。
 #   .\build.ps1            構成 + ビルド
 #   .\build.ps1 -Clean     build/ を作り直してから構成 + ビルド
 param([switch]$Clean)
