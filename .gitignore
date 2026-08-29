@@ -1,0 +1,14 @@
+/build/
+/.venv/
+probe/*.exe
+probe/*.obj
+probe/*.wav
+*.log
+/tools/__pycache__/
+
+# Ghidra 本体とプロジェクトDB（解析用の巨大バイナリ。解析結果は decomp_*.txt に残す）
+/tools/ghidra_dl/
+/tools/proj*/
+
+# 実行時に生成される設定ファイル
+openkrisp.ini
