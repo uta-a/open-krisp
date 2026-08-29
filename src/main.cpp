@@ -113,9 +113,12 @@ int wmain(int argc, wchar_t** argv) {
             rc = runScreenStress();
         } else if (hasFlag(argc, argv, L"--uitest")) {
             // 画面の桁ずれ確認用。Krisp もオーディオも起動しない。
+            // 既定は実際に使う固定サイズ。ずれると崩れ方の確認にならない。
+            const std::wstring dc = std::to_wstring(kFixedCols);
+            const std::wstring dr = std::to_wstring(kFixedRows);
             rc = runUiTest(eng,
-                           _wtoi(argVal(argc, argv, L"--cols", L"64")),
-                           _wtoi(argVal(argc, argv, L"--rows", L"20")),
+                           _wtoi(argVal(argc, argv, L"--cols", dc.c_str())),
+                           _wtoi(argVal(argc, argv, L"--rows", dr.c_str())),
                            hasFlag(argc, argv, L"--ascii"),
                            hasFlag(argc, argv, L"--picker")  ? 1 :
                            hasFlag(argc, argv, L"--capture") ? 2 : 0);

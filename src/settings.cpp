@@ -113,10 +113,8 @@ bool loadSettings(Settings* out) {
     {
         std::wstring t;
         str(L"hotkey.mute", t);
+        if (t.empty()) str(L"hotkey.global_mute", t);   // 旧版の名前も読む
         if (!t.empty()) parseKeyBinding(t, &s.muteKey);
-        t.clear();
-        str(L"hotkey.global_mute", t);
-        if (!t.empty()) parseKeyBinding(t, &s.globalMuteKey);
     }
 
     // 壊れた値で起動しないよう、ここで正気の範囲へ丸める。
@@ -171,11 +169,10 @@ bool saveSettings(const Settings& s, std::wstring* err) {
         s.cfg.agcEnabled ? 1 : 0, s.cfg.agcTarget);
     t += buf;
     t += L"\n[hotkey]\n";
-    t += L"; mute        = TUI の中でミュートを切り替えるキー\n";
-    t += L"; global_mute = 他のアプリを使っていても効くキー（なし で無効）\n";
-    t += L"; 例: M / Ctrl+Shift+M / Alt+F1 / F13\n";
+    t += L"; ミュートを切り替えるキー。例: M / Ctrl+Shift+M / Alt+F1 / F13\n";
+    t += L"; 修飾キー付き（または F13-F24）なら他のアプリを使っていても効く。\n";
+    t += L"; 修飾なしの単キーはこの画面の中だけで効く。\n";
     t += L"mute=" + formatKeyBinding(s.muteKey) + L"\n";
-    t += L"global_mute=" + formatKeyBinding(s.globalMuteKey) + L"\n";
     t += L"\n[ui]\n";
     t += L"; ascii=1 で罫線とメーターを ASCII にする（枠がずれる端末向け）\n";
     t += L"; この行を消すと、起動時に端末を実測して自動で決める\n";
