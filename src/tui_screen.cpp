@@ -388,15 +388,6 @@ bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
         }
     }
 
-    // 代替画面へ入る前にサイズを合わせる。合わせられない端末でも TUI は起動し、
-    // 呼び出し側は sizeLocked() を見て表示を落とす。
-    wantCols_ = (fixedCols > 0) ? fixedCols : 0;
-    wantRows_ = (fixedRows > 0) ? fixedRows : 0;
-    if (wantCols_ > 0 && wantRows_ > 0) {
-        lastApply_ = GetTickCount64();
-        applySize(wantCols_, wantRows_);
-    }
-
     // ウィンドウの境界と最大化ボタンを外してリサイズを塞ぐ。
     // Windows Terminal では GetConsoleWindow() が擬似ウィンドウを返すため効かない
     // （害もない）。効かない環境では利用者が窓を広げられてしまうので、
@@ -416,6 +407,18 @@ bool Term::enter(int fixedCols, int fixedRows, std::wstring* err) {
     WriteConsoleW(hOut_, init, (DWORD)wcslen(init), &wrote, nullptr);
     entered_ = true;
     left_.store(false);
+
+    // サイズ合わせは「代替画面へ入った後」に行う。
+    // conhost ではバッファを 18 行へ縮める操作がメイン画面のスクロールバッファに
+    // 効いてしまい、利用者がそれまで端末に出していた履歴（既定 9001 行ぶん）が
+    // 消える。代替画面へ移ってからなら、縮むのは代替バッファだけで済む。
+    // 合わせられない端末でも TUI は起動し、呼び出し側は sizeLocked() を見て落とす。
+    wantCols_ = (fixedCols > 0) ? fixedCols : 0;
+    wantRows_ = (fixedRows > 0) ? fixedRows : 0;
+    if (wantCols_ > 0 && wantRows_ > 0) {
+        lastApply_ = GetTickCount64();
+        applySize(wantCols_, wantRows_);
+    }
     return true;
 }
 
