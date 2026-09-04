@@ -26,9 +26,11 @@ public:
                                       float* out, size_t outN);
     typedef void  (*NCReset_t)(void* session);
 
-    // 署名検証関数 sub_53110 の RVA。将来のバージョン差異はシグネチャ探索で吸収予定。
-    // 先頭が想定バイト列でない場合はパッチを中止して失敗させる（誤爆防止）。
-    static const uintptr_t kSigCheckRva = 0x53110;
+    // 署名検証トランポリンの RVA（本バージョンでの位置）。
+    // 形: lea rdx,["Discord Inc."] ; lea r8,[data] ; jmp <本体>。
+    // 固定 RVA が版ズレで合わないときは、ロード済みイメージから同じ形を走査して
+    // 自動特定する（patchSigCheck 参照）。Discord が更新しても開けるようにするため。
+    static const uintptr_t kSigCheckRva = 0x523E0;
     static constexpr uint8_t kSigCheckHead[3] = { 0x48, 0x8D, 0x15 }; // lea rdx,[rip+..]
 
     bool load(std::wstring* err);           // モジュール探索→ロード→パッチ→初期化
@@ -41,12 +43,10 @@ public:
     void  ncSetModel(const char* m) { if (NCSetModel_) NCSetModel_(m); }
 
     // 抑制レベル(0-100)。ProcessFloat が毎回参照するグローバル(既定100=最大)を書き換える。
-    // 本バージョン固定 RVA。バージョン差異では効かない場合があるが致命的ではない。
-    static const uintptr_t kSuppressionRva = 0xDA20B0;
-    void setSuppression(float level) {
-        if (mod_) *reinterpret_cast<float*>(
-            reinterpret_cast<uint8_t*>(mod_) + kSuppressionRva) = level;
-    }
+    // 本バージョンの固定 RVA。版ズレでこの番地が別 global を指すと、そこへ書くと
+    // 無関係な値を壊すため、ロード時に値域(0-100)を検査し、妥当なときだけ有効にする。
+    static const uintptr_t kSuppressionRva = 0xDA10B0;
+    void setSuppression(float level) { if (supp_) *supp_ = level; }
 
     const std::wstring& moduleDir() const { return moduleDir_; }
 
@@ -62,6 +62,8 @@ private:
     NCSetup2_t        NCSetup2_ = nullptr;
     NCProcessFloat_t  NCProcessFloat_ = nullptr;
     NCReset_t         NCReset_ = nullptr;
+    float*            supp_ = nullptr;   // 抑制グローバル（値域検査を通ったときだけ非 null）
 
     bool patchSigCheck(std::wstring* err);
+    void resolveSuppression();           // load() 内でロード後に呼ぶ
 };

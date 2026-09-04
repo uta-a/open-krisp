@@ -139,3 +139,26 @@ NCSetup2_t typedef と GetProcAddress("KrispNCSetup2")追加。ビルド成功�
 本ログは第1版の解析記録であり、内容はそのまま有効（署名検証 RVA `0x53110`、
 セッションマップと `engine=1` の件、抑制強度 RVA `0xDA20B0`）。
 第2版での実装上の変更は README.md と git のコミット履歴を参照。
+
+## 2026-09-04 Discord 更新(9256)で開かなくなった → 署名/抑制 RVA 再特定 + 自己修復化
+Stable が app-1.0.9255→9256 に更新され、discord_krisp.node が 15,071,160→15,066,552 bytes に変化。
+固定 RVA 0x53110 の先頭バイトが合わず「署名検証関数の先頭バイトが想定と異なります」で起動不可に。
+
+再特定（tools/ を KRISP_NODE 環境変数で新旧モジュールへ向けて解析）:
+- 署名検証トランポリン: 旧 0x53110 → 新 **0x523E0**。形は不変:
+  `48 8D 15 <d1>`(lea rdx,["Discord Inc."]) `4C 8D 05 <d2>`(lea r8,[data]) `E9 <rel>`(jmp 本体)。
+  "Discord Inc." 文字列は .rdata:0xCB5990、参照命令末尾 0x523E7 → 命令先頭 0x523E0。
+- 抑制グローバル: 旧 0xDA20B0 → 新 **0xDA10B0**（-0x1000）。周辺で float==100.0 は 1 箇所のみ。
+  参照元も新旧で 4 箇所・同トポロジー、いずれも `movss xmm0,[rip+global]` で一致。
+
+修正(src/krisp_shim.*):
+- kSigCheckRva=0x523E0, kSuppressionRva=0xDA10B0 に更新。
+- **自己修復**: 固定 RVA がトランポリン("Discord Inc." 参照 + 形)でなければ、ロード済み
+  イメージ(SizeOfImage)全体を走査して同じ形を探し、そこをパッチ。今後の更新で位置が
+  ずれても開けるようにした。先頭 3 バイト一致だけでなく文字列参照まで検証して誤爆防止。
+- **抑制の値域ガード**: ロード時に kSuppressionRva の float が 0-100 のときだけ有効化。
+  版ズレで別 global を指す場合は書き込みを無効化し、無関係な値を壊さない。
+- tools/dis_exports.py の MODULE を KRISP_NODE 環境変数 or 最新自動探索に変更。
+
+実証: 9256 をロードして "Initialized Krisp SDK successfully"→NC セッション確立、
+--suppression 70 受理。--uitest --stress 3項目 ok。

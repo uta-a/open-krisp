@@ -11,9 +11,17 @@ from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_OP_MEM, CS_OP_IMM, x86_cons
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pe import PE
 
-MODULE = os.path.join(
-    os.environ['LOCALAPPDATA'],
-    r'Discord\app-1.0.9255\modules\discord_krisp-1\discord_krisp\discord_krisp.node')
+import glob as _glob
+def _find_module():
+    env = os.environ.get('KRISP_NODE')
+    if env and os.path.exists(env):
+        return env
+    pat = os.path.join(os.environ['LOCALAPPDATA'],
+        'Discord*', 'app-*', 'modules', 'discord_krisp-*', 'discord_krisp', 'discord_krisp.node')
+    hits = _glob.glob(pat)
+    hits.sort(key=os.path.getmtime, reverse=True)
+    return hits[0] if hits else ''
+MODULE = _find_module()
 
 
 def annotate(pe, insn):

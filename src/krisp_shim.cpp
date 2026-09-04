@@ -1,5 +1,6 @@
 #include "krisp_shim.h"
 #include <algorithm>
+#include <cstring>   // memcmp / memcpy
 
 constexpr uint8_t KrispShim::kSigCheckHead[3];
 
@@ -55,14 +56,68 @@ std::vector<std::wstring> KrispShim::findModules() {
     return dirs;
 }
 
-bool KrispShim::patchSigCheck(std::wstring* err) {
-    uint8_t* t = reinterpret_cast<uint8_t*>(mod_) + kSigCheckRva;
-    // 想定バイト列でなければ、別バージョンの可能性があるので中止（安全側）
-    if (t[0] != kSigCheckHead[0] || t[1] != kSigCheckHead[1] || t[2] != kSigCheckHead[2]) {
-        if (err) *err = L"署名検証関数の先頭バイトが想定と異なります"
-                        L"（discord_krisp.node のバージョン差異の可能性）。";
-        return false;
+// 署名検証トランポリンが t にあるか（形も文字列参照も確かめる）。
+//   48 8D 15 <d1> : lea rdx,[rip+d1]  (d1 は "Discord Inc." を指す)
+//   4C 8D 05 <d2> : lea r8,[rip+d2]
+//   E9 <rel>      : jmp <本体>
+static bool isSigTrampoline(uint8_t* t, uint8_t* strAddr) {
+    if (t[0] != 0x48 || t[1] != 0x8D || t[2] != 0x15) return false;
+    int32_t d1; memcpy(&d1, t + 3, 4);
+    if (t + 7 + d1 != strAddr) return false;
+    if (t[7] != 0x4C || t[8] != 0x8D || t[9] != 0x05) return false;
+    return t[14] == 0xE9;
+}
+
+// ロード済みイメージから "Discord Inc." と署名検証トランポリンを探す。
+// 固定 RVA が Discord の更新でズレても、この形は版が変わっても保たれるので
+// 開けなくなるのを防げる。見つからなければ nullptr。
+static uint8_t* findSigTrampoline(uint8_t* base) {
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+    const size_t size = nt->OptionalHeader.SizeOfImage;
+
+    // 末尾 NUL まで含めて照合し、"Discord Inc." で始まる別文字列に当たらないようにする
+    static const char kNeedle[] = "Discord Inc.";
+    const size_t nlen = sizeof(kNeedle);   // NUL 込み 13 バイト
+    uint8_t* strAddr = nullptr;
+    for (size_t i = 0; i + nlen <= size; i++) {
+        if (memcmp(base + i, kNeedle, nlen) == 0) { strAddr = base + i; break; }
     }
+    if (!strAddr) return nullptr;
+
+    for (size_t i = 0; i + 15 <= size; i++) {
+        if (isSigTrampoline(base + i, strAddr)) return base + i;
+    }
+    return nullptr;
+}
+
+bool KrispShim::patchSigCheck(std::wstring* err) {
+    uint8_t* base = reinterpret_cast<uint8_t*>(mod_);
+
+    // "Discord Inc." の実在位置を先に押さえ、固定 RVA が本当にトランポリンかを
+    // 文字列参照ごと検証する。先頭 3 バイト一致だけだと別関数を誤爆しうるため。
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+    const size_t size = nt->OptionalHeader.SizeOfImage;
+    static const char kNeedle[] = "Discord Inc.";
+    const size_t nlen = sizeof(kNeedle);
+    uint8_t* strAddr = nullptr;
+    for (size_t i = 0; i + nlen <= size; i++)
+        if (memcmp(base + i, kNeedle, nlen) == 0) { strAddr = base + i; break; }
+
+    uint8_t* t = base + kSigCheckRva;
+    if (!(strAddr && isSigTrampoline(t, strAddr))) {
+        // 固定 RVA が版ズレで合わない → イメージ全体から形で探し直す
+        t = findSigTrampoline(base);
+        if (!t) {
+            if (err) *err = L"署名検証関数を特定できませんでした"
+                            L"（discord_krisp.node のバージョン差異の可能性）。";
+            return false;
+        }
+    }
+
     DWORD old;
     if (!VirtualProtect(t, 3, PAGE_EXECUTE_READWRITE, &old)) {
         if (err) *err = L"VirtualProtect に失敗しました。";
@@ -72,6 +127,17 @@ bool KrispShim::patchSigCheck(std::wstring* err) {
     VirtualProtect(t, 3, old, &old);
     FlushInstructionCache(GetCurrentProcess(), t, 3);
     return true;
+}
+
+// 抑制グローバルを解決する。固定 RVA の値が抑制レベルとして妥当(0-100)なときだけ
+// 有効にする。版ズレでこの番地が別の用途に変わっていた場合、そこへ書くと無関係な
+// 値を壊すので、その場合は無効のまま（強度スライダーが効かないだけで済ませる）。
+void KrispShim::resolveSuppression() {
+    supp_ = nullptr;
+    if (!mod_) return;
+    float* p = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(mod_) + kSuppressionRva);
+    const float v = *p;
+    if (v >= 0.0f && v <= 100.0f) supp_ = p;
 }
 
 bool KrispShim::load(std::wstring* err) {
@@ -108,5 +174,6 @@ bool KrispShim::load(std::wstring* err) {
         if (err) *err = L"Krisp 初期化に失敗しました（コード " + std::to_wstring(r) + L"）。";
         return false;
     }
+    resolveSuppression();   // 抑制グローバルの番地を検査（誤番地なら無効化）
     return true;
 }
